@@ -28,6 +28,7 @@ export default function registerFeasibilityProbe(pi: ExtensionAPI): void {
     async execute(_toolCallId, params) {
       return {
         content: [{ type: "text", text: params.text }],
+        details: { echoed: true },
       };
     },
   });
