@@ -1,0 +1,26 @@
+name: Issue 1 API feasibility probes
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/feasibility.yml"
+      - "spikes/issue-1/**"
+      - "package.json"
+      - "tsconfig.json"
+  workflow_dispatch:
+
+jobs:
+  probes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.21.1"
+      - name: Install pinned direct dependencies
+        run: npm install --ignore-scripts --no-audit --no-fund
+      - name: Typecheck both API probes
+        run: npm run typecheck
+      - name: Exercise Pi Durable SQLite close/reopen
+        run: npm run smoke:durable
