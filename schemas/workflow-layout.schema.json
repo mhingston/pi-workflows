@@ -76,7 +76,26 @@
               }
             }
           }
-        }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "const": "known"
+                }
+              },
+              "required": [
+                "kind"
+              ]
+            },
+            "then": {
+              "required": [
+                "anchor"
+              ]
+            }
+          }
+        ]
       }
     },
     "edges": {
