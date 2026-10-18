@@ -1,0 +1,19 @@
+{
+  "name": "pi-workflows-feasibility",
+  "private": true,
+  "type": "module",
+  "description": "Dependency-pinned, non-production API probes for issue #1",
+  "engines": {
+    "node": ">=22.16.0"
+  },
+  "scripts": {
+    "probe:durable": "node --experimental-strip-types examples/feasibility/durable-child-tasks.ts",
+    "probe:pi": "pi --extension ./examples/feasibility/pi-extension.ts"
+  },
+  "dependencies": {
+    "@earendil-works/chord": "1.3.0",
+    "@earendil-works/pi-ai": "1.3.0",
+    "@earendil-works/pi-coding-agent": "1.3.0",
+    "@earendil-works/pi-durable": "1.3.0"
+  }
+}
