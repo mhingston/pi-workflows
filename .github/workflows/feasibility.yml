@@ -1,0 +1,22 @@
+name: Feasibility probes
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  source-contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      # Temporary spike manifest: commit npm lockfile once dependencies are resolved.
+      - run: npm install --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm run probe:durable
