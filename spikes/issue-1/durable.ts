@@ -23,16 +23,17 @@ import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite
 
 const context = BACKGROUND_CONTEXT;
 
-type ChildState = { phase: "sleep" } | { phase: "return" };
+// Published Pi Durable 1.3.0 exposes invocation-bound sleep(), not
+// the persisted phase-boundary sleepUntil() added later on upstream main.
+// After close/reopen, this child's phase is eligible to rerun from the top.
+type ChildState = { phase: "run" };
 const Child = defineTask<number, ChildState, number>({
   name: "spike.child",
   version: 1,
-  initial: () => ({ phase: "sleep" }),
+  initial: () => ({ phase: "run" }),
   phases: {
-    sleep: async (_task, runtime, ctx) => {
-      await runtime.sleepUntil(runtime.now() + 300, { phase: "return" }, ctx);
-    },
-    return: async (task, runtime, ctx) => {
+    run: async (task, runtime, ctx) => {
+      await runtime.sleep(runtime.now() + 300, ctx);
       await runtime.commit(
         () => ({ status: "terminal", outcome: { status: "completed", result: task.input } }),
         ctx,
