@@ -2,10 +2,13 @@
   "name": "pi-workflows-feasibility",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=22.19.0" },
+  "engines": {
+    "node": ">=22.19.0"
+  },
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "smoke:durable": "node --experimental-strip-types spikes/issue-1/durable.ts"
+    "smoke:durable": "node --experimental-strip-types spikes/issue-1/durable.ts",
+    "test:artifact": "node --experimental-strip-types --test tests/artifact.test.ts"
   },
   "dependencies": {
     "@earendil-works/chord": "1.3.0",
