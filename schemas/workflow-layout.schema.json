@@ -90,6 +90,9 @@
               ]
             },
             "then": {
+              "properties": {
+                "anchor": {}
+              },
               "required": [
                 "anchor"
               ]
