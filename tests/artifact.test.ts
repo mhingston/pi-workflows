@@ -149,3 +149,72 @@ test("trusted fixture behaves identically after no-op source round-trip", async 
     await rm(folder, { recursive: true, force: true });
   }
 });
+
+
+test("SemVer 2.0 agreement between loader and JSON Schema", async () => {
+  const Ajv2020 = (await import("ajv/dist/2020.js")).default;
+  const schema = JSON.parse(await readFile(
+    new URL("../schemas/workflow-manifest.schema.json", import.meta.url), "utf8",
+  )) as object;
+  const validate = new Ajv2020({ strict: true }).compile(schema);
+  const files = await fixture();
+  const base = JSON.parse(files.manifestJson) as WorkflowManifest;
+
+  const valid = [
+    "0.0.0", "1.2.3", "1.2.3+build.1", "1.2.3-alpha.1+001.ci",
+    "1.2.3-0", "10.20.30-rc.0", "999.0.1-A-1.abc+build-001",
+  ];
+  const invalid = [
+    "01.2.3", "1.02.3", "1.2.03", "1.2.3-alpha..1",
+    "1.2.3-alpha.01", "1.2.3-01", "1.2.3+build..1",
+    "1.2.3-", "1.2.3+", "1.2.3+build!",
+  ];
+  for (const version of valid) {
+    const manifest = { ...base, version };
+    assert.equal(validate(manifest), true, version + ": JSON Schema rejected valid SemVer");
+    const loaded = await loadWorkflow({ ...files, manifestJson: JSON.stringify(manifest) });
+    assert.equal(loaded.manifest.version, version);
+  }
+  for (const version of invalid) {
+    const manifest = { ...base, version };
+    assert.equal(validate(manifest), false, version + ": JSON Schema accepted invalid SemVer");
+    await assert.rejects(loadWorkflow({
+      ...files, manifestJson: JSON.stringify(manifest),
+    }), /semver version/, version + ": loader accepted invalid SemVer");
+  }
+});
+
+test("schema and loader both require anchors for known nodes and strict kind types", async () => {
+  const Ajv2020 = (await import("ajv/dist/2020.js")).default;
+  const schema = JSON.parse(await readFile(
+    new URL("../schemas/workflow-layout.schema.json", import.meta.url), "utf8",
+  )) as object;
+  const validate = new Ajv2020({ strict: true }).compile(schema);
+  const files = await fixture();
+  const base = JSON.parse(files.layoutJson!) as WorkflowLayout;
+  assert.equal(validate(base), true);
+
+  const missingKnownAnchor = structuredClone(base) as {
+    nodes: Array<{ kind: unknown; anchor?: unknown }>;
+  };
+  delete missingKnownAnchor.nodes[1]!.anchor;
+  assert.equal(validate(missingKnownAnchor), false, "schema must reject known node without anchor");
+  await assert.rejects(loadWorkflow({
+    ...files, layoutJson: JSON.stringify(missingKnownAnchor),
+  }), /known node requires/);
+
+  const kindAsArray = structuredClone(missingKnownAnchor);
+  kindAsArray.nodes[1]!.kind = ["known"];
+  assert.equal(validate(kindAsArray), false, "schema must reject non-string node kind");
+  await assert.rejects(loadWorkflow({
+    ...files, layoutJson: JSON.stringify(kindAsArray),
+  }), /kind must be known, opaque or dynamic/);
+
+  for (const kind of ["opaque", "dynamic"]) {
+    const unanchored = structuredClone(missingKnownAnchor);
+    unanchored.nodes[1]!.kind = kind;
+    assert.equal(validate(unanchored), true, "schema requires unwanted anchor for " + kind);
+    const loaded = await loadWorkflow({ ...files, layoutJson: JSON.stringify(unanchored) });
+    assert.equal(loaded.layout?.nodes[1]?.kind, kind);
+  }
+});
