@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
+import { Ajv2020 } from "ajv/dist/2020.js";
 import {
   ArtifactError, exportWorkflow, loadWorkflow, moveNode,
   refuseStructuralEdit, sha256, type WorkflowFiles,
@@ -152,7 +153,6 @@ test("trusted fixture behaves identically after no-op source round-trip", async 
 
 
 test("SemVer 2.0 agreement between loader and JSON Schema", async () => {
-  const Ajv2020 = (await import("ajv/dist/2020.js")).default;
   const schema = JSON.parse(await readFile(
     new URL("../schemas/workflow-manifest.schema.json", import.meta.url), "utf8",
   )) as object;
@@ -185,7 +185,6 @@ test("SemVer 2.0 agreement between loader and JSON Schema", async () => {
 });
 
 test("schema and loader both require anchors for known nodes and strict kind types", async () => {
-  const Ajv2020 = (await import("ajv/dist/2020.js")).default;
   const schema = JSON.parse(await readFile(
     new URL("../schemas/workflow-layout.schema.json", import.meta.url), "utf8",
   )) as object;
@@ -194,7 +193,7 @@ test("schema and loader both require anchors for known nodes and strict kind typ
   const base = JSON.parse(files.layoutJson!) as WorkflowLayout;
   assert.equal(validate(base), true);
 
-  const missingKnownAnchor = structuredClone(base) as {
+  const missingKnownAnchor = structuredClone(base) as unknown as {
     nodes: Array<{ kind: unknown; anchor?: unknown }>;
   };
   delete missingKnownAnchor.nodes[1]!.anchor;
