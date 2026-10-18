@@ -94,7 +94,8 @@ function string(value: unknown, path: string): string {
 
 const ID = /^[a-z][a-z0-9_-]*$/;
 const SHA = /^[a-f0-9]{64}$/;
-const VERSION = /^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$/;
+/** SemVer 2.0 (strict core numerics, prerelease identifiers, optional build metadata). */
+const VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/;
 
 function checkId(value: unknown, path: string): string {
   const id = string(value, path);
@@ -170,7 +171,7 @@ function checkLayout(value: unknown, source: string): Promise<WorkflowLayout> {
       const id = checkId(node.id, path + ".id");
       if (ids.has(id)) fail("duplicate node ID: " + id);
       ids.add(id);
-      if (!["known", "opaque", "dynamic"].includes(String(node.kind))) {
+      if (typeof node.kind !== "string" || !["known", "opaque", "dynamic"].includes(node.kind)) {
         fail(path + ".kind must be known, opaque or dynamic");
       }
       string(node.label, path + ".label");
