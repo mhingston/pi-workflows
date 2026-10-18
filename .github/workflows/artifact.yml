@@ -1,0 +1,33 @@
+name: Workflow artifact contract
+
+on:
+  pull_request:
+    paths:
+      - "src/**"
+      - "schemas/**"
+      - "fixtures/**"
+      - "tests/**"
+      - "docs/artifact-format.md"
+      - "package.json"
+      - "tsconfig.json"
+      - ".github/workflows/artifact.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  artifact-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.21.1"
+      - name: Install pinned dependencies
+        run: npm install --ignore-scripts --no-audit --no-fund
+      - name: Typecheck source, fixtures and tests
+        run: npm run typecheck
+      - name: Round-trip, integrity and trusted semantic fixture tests
+        run: npm run test:artifact
