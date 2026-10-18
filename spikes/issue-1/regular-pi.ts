@@ -30,7 +30,7 @@ export default function registerProbe(pi: ExtensionAPI): void {
       name: Type.String({ description: "Probe name" }),
     }),
     async execute(_toolCallId, params) {
-      return { content: [{ type: "text", text: response(params.name) }] };
+      return { content: [{ type: "text", text: response(params.name) }], details: { name: params.name } };
     },
   });
 }
