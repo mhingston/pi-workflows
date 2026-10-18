@@ -1,0 +1,20 @@
+{
+  "name": "pi-workflows-feasibility",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22.19.0" },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "smoke:durable": "node --experimental-strip-types spikes/issue-1/durable.ts"
+  },
+  "dependencies": {
+    "@earendil-works/chord": "1.3.0",
+    "@earendil-works/pi-ai": "1.3.0",
+    "@earendil-works/pi-coding-agent": "1.3.0",
+    "@earendil-works/pi-durable": "1.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "22.19.19",
+    "typescript": "5.9.3"
+  }
+}
