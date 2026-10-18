@@ -17,7 +17,7 @@ pi --extension ./spikes/issue-1/regular-pi.ts
 
 The command and tool intentionally echo the **same deterministic handler**, proving the two registration surfaces; they do not auto-discover workflows or execute user-supplied code.
 
-The durable probe registers actual `defineTask` implementations and starts a conversation-owned parent task that atomically creates two child tasks and commits a `waiting` checkpoint. The children use the released invocation-bound `runtime.sleep()` (not a persisted timer). The harness closes while the parent waits, then reopens the same database; child phases are reattempted and the parent completes via `runtime.outcomes()`. Newer upstream main adds a durable `sleepUntil()` method unavailable in 1.3.0.
+The durable probe registers actual `defineTask` implementations and starts a conversation-owned parent task that atomically creates two child tasks and commits a `waiting` checkpoint. The children use the released invocation-bound `runtime.sleep()` with an absolute deadline persisted via `runtime.memo()` (not a persisted sleeping-task checkpoint). The harness closes while the parent waits, then reopens the same database; child phases may be reattempted but reuse the original memoized deadline, and the parent completes via `runtime.outcomes()`. Newer upstream main adds a durable `sleepUntil()` method unavailable in 1.3.0.
 
 This is a **controlled shutdown/reopen** and replay demonstration, not a test of persisted timer scheduling. A real process-kill, idempotency/side-effect injection and Cloudflare Durable Object eviction test belong in [issue #3](https://github.com/mhingston/pi-workflows/issues/3). All side effects here are limited to creating and removing a temporary SQLite database.
 
