@@ -3,7 +3,7 @@
  *
  * Run: npm run smoke:durable
  * No model provider credentials needed. Uses real SQLite storage, not an
- * in-memory implementation. Demonstrates checkpointed sleep + child join
+ * in-memory implementation. Demonstrates memoized deadline + child join
  * across a controlled Harness.close()/reopen(), NOT a process-kill guarantee.
  */
 import assert from "node:assert/strict";
@@ -25,7 +25,9 @@ const context = BACKGROUND_CONTEXT;
 
 // Published Pi Durable 1.3.0 exposes invocation-bound sleep(), not
 // the persisted phase-boundary sleepUntil() added later on upstream main.
-// After close/reopen, this child's phase is eligible to rerun from the top.
+// Memoize the absolute wake deadline independently of the phase checkpoint.
+// After close/reopen, this child's phase may rerun from the top, but the
+// deadline remains stable rather than being extended by another 300 ms.
 type ChildState = { phase: "run" };
 const Child = defineTask<number, ChildState, number>({
   name: "spike.child",
@@ -33,7 +35,8 @@ const Child = defineTask<number, ChildState, number>({
   initial: () => ({ phase: "run" }),
   phases: {
     run: async (task, runtime, ctx) => {
-      await runtime.sleep(runtime.now() + 300, ctx);
+      const deadline = await runtime.memo("wake-deadline", runtime.now() + 300, ctx);
+      await runtime.sleep(deadline, ctx);
       await runtime.commit(
         () => ({ status: "terminal", outcome: { status: "completed", result: task.input } }),
         ctx,
