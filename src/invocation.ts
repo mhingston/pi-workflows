@@ -222,7 +222,8 @@ export function createWorkflowInvocationService(config: InvocationConfig): Workf
     const { descriptor, dependencies } = await resolvedBinding();
     const registry = new ProviderRegistry();
     registry.registerRuntime(registeredRuntime(descriptor));
-    const runtime = registry.runtime(config.runtimeId ?? "pi_durable", artifact.manifest.requiredCapabilities);
+    const runtime = registry.runtime(config.runtimeId ?? "pi_durable", artifact.manifest.requiredCapabilities)
+      as WorkflowRuntime<WorkflowInvocationResult>;
     return { runtime, dependencies };
   }
 
