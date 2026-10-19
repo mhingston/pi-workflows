@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Pi Workflows — Editor</title>
+  <link rel="stylesheet" href="/style.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <header>
+    <div>
+      <strong>Pi Workflows</strong>
+      <span id="workflow-title">Loading package…</span>
+      <span class="pill" id="dirty">Unmodified</span>
+    </div>
+    <nav aria-label="Actions">
+      <button id="reload">Reload disk</button>
+      <button id="download">Download files</button>
+      <button id="save" class="primary">Save to disk</button>
+    </nav>
+  </header>
+  <p id="status" role="status" aria-live="polite">Loading…</p>
+  <main>
+    <section class="graph-panel" aria-label="Workflow projection">
+      <div class="panel-title"><strong>Graph projection</strong><small id="notice"></small></div>
+      <div id="viewport">
+        <div id="stage">
+          <svg id="edges" role="img" aria-label="Illustrative visual edges"></svg>
+          <div id="nodes"></div>
+        </div>
+      </div>
+      <footer>Drag nodes to save their layout. Dashed connections are illustrative only; no execution graph is inferred.</footer>
+    </section>
+    <aside aria-label="Properties and source">
+      <section class="properties">
+        <h2>Node properties</h2>
+        <div id="inspector">Select a node to inspect its source mapping.</div>
+      </section>
+      <section class="source">
+        <div class="panel-title"><h2>Authoritative workflow.ts</h2><button id="apply-code">Apply code edit</button></div>
+        <textarea id="code" spellcheck="false" aria-label="TypeScript workflow source"></textarea>
+        <small>Unrecognized code remains editable here. Anchored regions may only be changed if their mapping stays unambiguous; otherwise the edit is rejected.</small>
+      </section>
+    </aside>
+  </main>
+</body>
+</html>
