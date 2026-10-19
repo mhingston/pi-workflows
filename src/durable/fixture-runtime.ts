@@ -17,7 +17,9 @@ export const FIXTURE_CAPABILITIES = ["agent", "hooks", "approval", "dynamic_task
 export type StepReceipt = { taskId: number; input: number; result: number };
 export type WorkflowOutcome =
   | { status: "completed"; output: number; steps: StepReceipt[]; sourceSha256: string; workflowVersion: string }
-  | { status: "needs_reconciliation"; effectKey: string; steps: StepReceipt[]; sourceSha256: string; workflowVersion: string };
+  | { status: "needs_reconciliation"; effectKey: string; steps: StepReceipt[]; sourceSha256: string; workflowVersion: string }
+  /** Native failed/aborted outcome receipt: child IDs without inventing step successes. */
+  | { status: "unsuccessful"; childTaskIds: number[] };
 
 export interface ApprovalEffect {
   /**
@@ -87,6 +89,12 @@ export function registerFixtureWorkflow(
   ))) throw new Error("unsupported workflow capability");
   // The caller is responsible for loading/verifying the canonical source
   // with loadWorkflow() before registering the module.
+  // Native terminal checkpoints are removed. Preserve direct child IDs on
+  // *all* unsuccessful paths so failure/abort inspection remains possible.
+  const unsuccessful = (checkpoint: RunState): Extract<WorkflowOutcome, { status: "unsuccessful" }> => ({
+    status: "unsuccessful",
+    childTaskIds: checkpoint.phase === "collect" ? checkpoint.childIds.map(Number) : [],
+  });
   const Child = defineTask<number, { phase: "work"; deadline: number }, number>({
     name: "pi-workflows.fixture.child",
     version: 1,
@@ -117,7 +125,8 @@ export function registerFixtureWorkflow(
             task.input.sourceSha256 !== manifest.sourceSha256 ||
             !await matchingPublication(task.input)) {
           await runtime.commit(() => ({
-            status: "terminal", outcome: { status: "failed", error: { message: "workflow revision mismatch" } },
+            status: "terminal", outcome: { status: "failed", error: { message: "workflow revision mismatch" },
+              result: unsuccessful(task.state.checkpoint) },
           }), ctx);
           return;
         }
@@ -142,7 +151,8 @@ export function registerFixtureWorkflow(
             task.input.workflowVersion !== manifest.version ||
             !await matchingPublication(task.input)) {
           await runtime.commit(() => ({
-            status: "terminal", outcome: { status: "failed", error: { message: "workflow revision changed while running" } },
+            status: "terminal", outcome: { status: "failed", error: { message: "workflow revision changed while running" },
+              result: unsuccessful(task.state.checkpoint) },
           }), ctx);
           return;
         }
@@ -150,7 +160,8 @@ export function registerFixtureWorkflow(
         const outcomes = await runtime.outcomes(ids, ctx);
         if (!outcomes.every(outcome => outcome.status === "completed")) {
           await runtime.commit(() => ({
-            status: "terminal", outcome: { status: "failed", error: { message: "child task did not complete" } },
+            status: "terminal", outcome: { status: "failed", error: { message: "child task did not complete" },
+              result: unsuccessful(task.state.checkpoint) },
           }), ctx);
           return;
         }
@@ -216,14 +227,16 @@ export function registerFixtureWorkflow(
             await runtime.commit(() => ({
               status: "terminal", outcome: { status: "failed", error: {
                 message: err instanceof Error ? err.message : "workflow failed",
-              } },
+              }, result: unsuccessful(task.state.checkpoint) },
             }), ctx);
           }
         }
       },
     },
-    abort: async (_task, runtime, ctx) => {
-      await runtime.commit(() => ({ status: "terminal", outcome: { status: "aborted" } }), ctx);
+    abort: async (task, runtime, ctx) => {
+      await runtime.commit(() => ({
+        status: "terminal", outcome: { status: "aborted", result: unsuccessful(task.state.checkpoint) },
+      }), ctx);
     },
   });
 
