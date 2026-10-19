@@ -9,6 +9,13 @@ import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import { exportWorkflow, loadWorkflow, type LoadedWorkflow, type WorkflowFiles } from "./artifact.ts";
 import { editCode, editKnownName, moveProjectedNode, projectWorkflow } from "./editor.ts";
+import type { ExecutionGraph } from "./durable/run-graph.ts";
+
+export interface EditorOptions {
+  /** Inject a read-only observer from the OWNER of an existing native Harness.
+   * Never open a second task scheduler merely to serve editor requests. */
+  runGraph?: (nativeRunId: number) => Promise<ExecutionGraph | null>;
+}
 
 export async function readPackage(folder: string): Promise<WorkflowFiles> {
   const read = (name: string) => readFile(join(folder, name), "utf8");
@@ -89,7 +96,7 @@ async function body(request: IncomingMessage): Promise<Record<string, unknown>> 
   return parsed as Record<string, unknown>;
 }
 
-export async function startEditor(folder: string, port = 4175) {
+export async function startEditor(folder: string, port = 4175, options: EditorOptions = {}) {
   const directory = resolve(folder);
   const initial = await readPackage(directory);
   let workflow: LoadedWorkflow = await loadWorkflow(initial);
@@ -131,6 +138,25 @@ export async function startEditor(folder: string, port = 4175) {
             files, graph,
           });
         });
+        return;
+      }
+      if (request.method === "GET" && url.pathname === "/api/run-graph") {
+        if (!options.runGraph) {
+          json(response, 503, { error: "Live inspection requires a native Pi Durable host connection." });
+          return;
+        }
+        const raw = url.searchParams.get("runId");
+        if (!raw || !/^[1-9][0-9]*$/.test(raw) || !Number.isSafeInteger(Number(raw))) {
+          json(response, 400, { error: "runId must be a positive native task ID" });
+          return;
+        }
+        const execution = await options.runGraph(Number(raw));
+        // Never present another workflow's task graph inside the selected editor.
+        if (!execution || execution.workflowId !== workflow.manifest.id) {
+          json(response, 404, { error: "No matching native workflow run" });
+          return;
+        }
+        json(response, 200, execution);
         return;
       }
       if (request.method === "POST" && url.pathname === "/api/action") {
