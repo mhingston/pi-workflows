@@ -5,9 +5,10 @@
  * A TaskGraph contains only LIVE tasks. Complete the fixture's hierarchy from
  * the native parent's checkpoint/terminal step receipts and getTask() records.
  */
-import { BACKGROUND_CONTEXT, type Context } from "@earendil-works/chord/context";
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import type { Context } from "@earendil-works/chord";
 import type { Harness, TaskGraph, TaskId } from "@earendil-works/pi-durable";
-import type { RunInput, WorkflowOutcome } from "./fixture-runtime.ts";
+import type { RunInput, RunState, WorkflowOutcome } from "./fixture-runtime.ts";
 
 export type ExecutionNode = {
   readonly taskId: number;
@@ -55,7 +56,7 @@ export async function captureRunGraph(
 
   const ids = new Set<number>([runId]);
   const checkpoint = root.state.status === "pending" || root.state.status === "running" ||
-    root.state.status === "waiting" ? root.state.checkpoint : null;
+    root.state.status === "waiting" ? root.state.checkpoint as unknown as RunState : null;
   if (checkpoint?.phase === "collect") {
     for (const id of checkpoint.childIds) ids.add(Number(id));
   }
