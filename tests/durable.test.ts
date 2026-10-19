@@ -87,6 +87,28 @@ test("rejects unregistered workflow revision before executing child tasks", asyn
   } finally { await harness.close(ctx).catch(() => {}); }
 }));
 
+test("provider failure after effect intent is uncertain, not safely retryable", async () => inTemp(async dir => {
+  let calls = 0;
+  const { Run, registry, input } = await trustedFixture({
+    approve: async () => { calls++; throw new Error("network timeout after remote acceptance"); },
+  });
+  const harness = await Harness.open(await openNodeSqliteStorage(join(dir, "session.sqlite")),
+    { models: createModels(), registry }, ctx);
+  try {
+    const root = await harness.root(ctx);
+    const id = await root.commit(
+      tx => tx.createTask(Run, input([2, 3], true), { ownership: { kind: "conversation" } }), ctx);
+    const settled = await harness.waitForTask(id, ctx);
+    assert.equal(settled.state.outcome.status, "completed");
+    if (settled.state.outcome.status === "completed") {
+      const result = settled.state.outcome.result;
+      assert.equal(result.status, "needs_reconciliation");
+      if (result.status === "needs_reconciliation") assert.ok(result.effectKey.includes("approval"));
+    }
+    assert.equal(calls, 1, "ambiguous action must not retry");
+  } finally { await harness.close(ctx).catch(() => {}); }
+}));
+
 test("SIGKILL after external effect, before receipt => manual reconciliation and no replayed effect", async () => inTemp(async dir => {
   const db = join(dir, "session.sqlite");
   const runIdFile = join(dir, "run-id.txt");
