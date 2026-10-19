@@ -29,3 +29,20 @@ test("source editing preserves unicode around a replacement", () => {
     "// 🍃 naïve\r\nconst name = 'λ';\r\n",
   );
 });
+
+
+test("multiple separate source edits keep every unrelated mixed line ending", () => {
+  const source = "alpha\r\nbeta\ncharlie\rdelta\r\n";
+  assert.equal(
+    sourceFromTextarea(source, "ALPHA\nbeta\ncharlie\nDELTA\n"),
+    "ALPHA\r\nbeta\ncharlie\rDELTA\r\n",
+  );
+});
+
+test("insert and remove lines without changing the EOL style of surviving lines", () => {
+  const source = "alpha\r\nbeta\ncharlie\r\n";
+  assert.equal(
+    sourceFromTextarea(source, "alpha\ninserted\ncharlie\n"),
+    "alpha\r\ninserted\r\ncharlie\r\n",
+  );
+});
