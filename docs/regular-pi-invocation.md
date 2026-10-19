@@ -79,9 +79,11 @@ interpreted as success or retried automatically.
 Pi 1.3.0 namespaces duplicate command names as `/workflow:1` and
 `/workflow:2` rather than overwriting registration. The adapter inspects
 `pi.getCommands()` at session start and before explicit command execution;
-if another `workflow` command exists it alerts and refuses to run. Remove
-the competing extension. Tool-name conflict checks require separate handling
-as part of future cross-runtime work.
+**only one plain `workflow` registration is accepted**. Any namespaced
+`workflow:N` entry, or another `workflow` entry, triggers a warning and
+the slash-command handler refuses to run. Remove the competing extension.
+Tool-name conflict checks require separate handling as part of future
+cross-runtime work.
 
 ## Evidence and remaining boundaries
 

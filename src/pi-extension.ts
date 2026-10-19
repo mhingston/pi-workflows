@@ -36,7 +36,14 @@ export function registerWorkflowExtension(pi: ExtensionAPI, makeService: Service
     return ctx.ui.confirm("Approve workflow action?",
       'Permit the "' + name + '" fixture approval action? Decline to cancel.');
   };
-  const commandConflict = () => pi.getCommands().filter(command => command.name === "workflow").length > 1;
+  // Pi 1.3.0 resolves duplicate registrations to workflow:1, workflow:2, etc.
+  // A single plain "workflow" name is the only unambiguous registration.
+  const commandConflict = () => {
+    const names = pi.getCommands()
+      .map(command => command.name)
+      .filter(name => name === "workflow" || /^workflow:[1-9]\\d*$/.test(name));
+    return names.length !== 1 || names[0] !== "workflow";
+  };
   pi.on("session_start", async (_event, ctx) => {
     if (commandConflict()) {
       ctx.ui.notify('Conflicting /workflow commands detected; invocation disabled. Resolve extension collision.', "error");

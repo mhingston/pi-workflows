@@ -153,11 +153,29 @@ test("untrusted code is never imported; duplicates are rejected deterministicall
   await assert.rejects(svc.list(), /Duplicate workflow name/);
 }));
 
-test("conflicting Pi /workflow commands are refused (not overwritten)", async () => inTemp(async dir => {
+test("conflicting Pi /workflow commands are refused, including Pi 1.3.0 namespaced collisions", async () => inTemp(async dir => {
   const svc = createWorkflowInvocationService({ cwd: dir, home: dir });
   const pi = piAdapter(svc, dir);
-  pi.setCommands([{ name: "workflow" }, { name: "workflow" }]);
-  await pi.command('run dynamic_agents --input-json {"values":[1],"requiresApproval":false}', pi.ctx);
-  assert.match(pi.messages.at(-1)!.message, /Conflicting/);
-  await assert.rejects(access(join(dir, ".pi", "workflow-runs.sqlite")));
+  const args = 'run dynamic_agents --input-json {"values":[1],"requiresApproval":false}';
+  // Exact resolution of two separate extensions registering "workflow" in Pi 1.3.0.
+  for (const names of [
+    ["workflow:1", "workflow:2"],
+    ["workflow:1"],
+    ["workflow", "workflow:2"],
+  ]) {
+    pi.setCommands(names.map(name => ({ name })));
+    await pi.command(args, pi.ctx);
+    assert.match(pi.messages.at(-1)!.message, /Conflicting/);
+    assert.equal(pi.messages.at(-1)!.level, "error");
+    await pi.command("list", pi.ctx);
+    assert.match(pi.messages.at(-1)!.message, /Conflicting/);
+  }
+  await assert.rejects(access(join(dir, ".pi", "workflow-runs.sqlite")),
+    "collision must prevent task creation");
+  // Similarly named but non-conflicting commands must not disable /workflow.
+  pi.setCommands([{ name: "workflow" }, { name: "workflow-help" }]);
+  await pi.command("list", pi.ctx);
+  assert.equal(pi.messages.at(-1)!.level, "info");
+  assert.deepEqual(JSON.parse(pi.messages.at(-1)!.message).map((x: { name: string }) => x.name),
+    ["dynamic_agents"]);
 }));
