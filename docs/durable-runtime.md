@@ -20,6 +20,50 @@ An external approval is not atomic with Pi Durable's database transaction. Befor
 
 The test process writes the external side effect to a log then experiences **SIGKILL before receipt commit**. After reopening SQLite, the effect callback must not run again and the workflow must return `needs_reconciliation`. This is *not* exactly-once execution: a crash after intent but before actual I/O may conservatively demand reconciliation. Production providers should use server-side idempotency keys or reconciliation endpoints. Fixture hooks are pure no-ops; effectful hooks need equivalent safety mechanisms.
 
+## Verified provider-side idempotency — issue #17
+
+The existing **legacy** `approve(key)` port remains fail-closed: a durable intent without
+a local receipt yields `needs_reconciliation` and never calls `approve` again.
+A separate **explicitly opted-in** `applyIdempotently(key, request)` approval
+port is available for providers that **guarantee atomic application/deduplication
+for the key and entire payload**, plus a queryable, authoritative receipt.
+This is a narrow approval-effect boundary, not a new workflow executor.
+
+The request binds the canonical approval reason and the SHA-256 of the **immutable
+native task input**. The operation key stays `sourceHash:parentTaskId:approval`
+through recovery. On a replay with intent but no local receipt, *only this
+opted-in provider* may receive the same request again. The adapter validates
+`idempotencyKey`, entire `request`, and the boolean approval in the returned
+`applied` or `already_applied` receipt before storing the native approval
+memo. A matching repeat is reported as `approvalDisposition: "already_applied"`
+in the completed workflow outcome. `unknown`, `conflict`, malformed/mismatched
+receipts, and thrown provider errors **never imply success** and finish with
+`needs_reconciliation`; none falls back to a legacy unsafe retry.
+
+`tests/durable-idempotency.test.ts` uses the **same native Pi Durable task
+registration and SQLite checkpoints** as the original tests. A separate process
+persists an external receipt and is SIGKILLed before the Pi approval memo.
+After reopening, a replay invokes the provider with the exact same key and
+payload. The test-only provider uses exclusive file creation (`wx`) to model
+provider-side deduplication, so two application attempts produce one stored
+provider application; an incomplete or unreadable file is `unknown`. Test
+probes also count native child executions and reject repeated child work.
+Negative recovery tests exercise a conflicting same-key/different-payload
+receipt and unreadable provider status. Ordinary completion and the old
+manual-reconciliation crash test continue to run in CI.
+
+**Limits:** The file provider is a sequential, test-only model, **not** a
+production transactional provider, distributed lock or reliable idempotency
+service. In production, guarantees must be supplied by the *external system*:
+atomic deduplicated processing of the same full operation, consistent
+authoritative receipts (or a read-only verified lookup), stable scoping of
+keys across retries, and retention for at least the entire replay window.
+An intent written before the call can still require manual handling if no
+verified receipt exists. There can be multiple task/effect **attempts** while
+only one **provider-enforced application** occurs; this is **not exactly-once
+distributed execution**. No generic external-effect, authorization or
+Cloudflare integration is introduced.
+
 ## Evidence and limitations
 
 The tests exercise native task registration, dynamic parallel children, the conditional/looping trusted TypeScript workflow, checkpoint/reopen at a parent join, a separate-process hard kill, source revision rejection, and durable step receipts. **No model-backed Pi agents or arbitrary TS runtime** are provided; the fixture models an agent port using deterministic child tasks.
