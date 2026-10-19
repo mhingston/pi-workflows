@@ -6,6 +6,7 @@ import { readFile, readdir, mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
+import { fileURLToPath } from "node:url";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { createModels } from "@earendil-works/pi-ai/models";
@@ -57,7 +58,7 @@ type CatalogEntry = { name: string; artifact?: LoadedWorkflow; invalid?: boolean
 const packaged = new URL("../fixtures/complex/", import.meta.url);
 
 async function packageFrom(directory: string | URL): Promise<LoadedWorkflow> {
-  const path = typeof directory === "string" ? directory : directory.pathname;
+  const path = typeof directory === "string" ? directory : fileURLToPath(directory);
   const [source, manifestJson] = await Promise.all([
     readFile(join(path, "workflow.ts"), "utf8"),
     readFile(join(path, "workflow.json"), "utf8"),
@@ -109,12 +110,13 @@ export function createWorkflowInvocationService(config: InvocationConfig): Workf
     if (trusted.manifest.id !== "dynamic_agents" || trusted.manifest.version !== "1.0.0") {
       throw new WorkflowInvocationError("trusted_package", "Unsupported installed trusted fixture revision.");
     }
-    const entries = [
-      ...(config.projectTrusted === false ? [] : await discover(join(config.cwd, ".pi", "workflows"))),
-      ...await discover(join(home, ".pi", "workflows")),
-    ];
+    const roots = [...new Set([
+      ...(config.projectTrusted === false ? [] : [join(config.cwd, ".pi", "workflows")]),
+      join(home, ".pi", "workflows"),
+    ])];
+    const entries = (await Promise.all(roots.map(discover))).flat();
     if (!entries.some(item => item.name === trusted.manifest.id)) {
-      entries.push({ name: trusted.manifest.id, path: packaged.pathname, artifact: trusted });
+      entries.push({ name: trusted.manifest.id, path: fileURLToPath(packaged), artifact: trusted });
     }
     return { entries: unique(entries), trusted };
   }
