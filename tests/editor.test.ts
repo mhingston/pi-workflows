@@ -123,8 +123,11 @@ test("local browser viewer serves a versioned package without invoking the workf
     assert.equal(await readFile(join(folder, "workflow.ts"), "utf8"), input.source);
     assert.ok(await readFile(join(folder, "layout.json"), "utf8"));
   } finally {
-    if (server) await new Promise<void>((done, reject) =>
-      server.close(error => error ? reject(error) : done()));
+    if (server) {
+      const running = server;
+      await new Promise<void>((done, reject) =>
+        running.close(error => error ? reject(error) : done()));
+    }
     await rm(folder, { recursive: true, force: true });
   }
 });
