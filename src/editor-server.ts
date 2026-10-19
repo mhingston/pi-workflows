@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import { exportWorkflow, loadWorkflow, type LoadedWorkflow, type WorkflowFiles } from "./artifact.ts";
 import { editCode, editKnownName, moveProjectedNode, projectWorkflow } from "./editor.ts";
+import { editCanvas, type CanvasKind } from "./canvas.ts";
 import type { ExecutionGraph } from "./durable/run-graph.ts";
 
 export interface EditorOptions {
@@ -180,7 +181,20 @@ export async function startEditor(folder: string, port = 4175, options: EditorOp
               break;
             case "property":
               if (typeof action.id !== "string") throw new Error("missing node id");
-              pending = await editKnownName(workflow, action.id, action.value as string);
+              pending = action.id.startsWith("canvas_")
+                ? await editCanvas(workflow, { type: "rename-step", id: action.id, name: action.value as string })
+                : await editKnownName(workflow, action.id, action.value as string);
+              break;
+            case "add-step":
+              pending = await editCanvas(workflow, { type: "add-step", kind: action.kind as CanvasKind,
+                name: action.name as string, x: action.x as number, y: action.y as number });
+              break;
+            case "remove-step":
+              pending = await editCanvas(workflow, { type: "remove-step", id: action.id as string });
+              break;
+            case "connect-step":
+              pending = await editCanvas(workflow, { type: "connect-step",
+                from: action.from as string, to: action.to as string });
               break;
             case "code":
               pending = await editCode(workflow, action.source as string);
