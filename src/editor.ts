@@ -3,7 +3,7 @@
  * Graph nodes are authoring hints. Neither this module nor the UI evaluates TS.
  */
 import ts from "typescript";
-import { canvasOrder, readCanvas, type CanvasKind } from "./canvas.ts";
+import { canvasOrder, readCanvas, supportedBranchCondition, type CanvasKind, type CanvasLane } from "./canvas.ts";
 import {
   ArtifactError, loadWorkflow, sha256, type LoadedWorkflow, type ProjectionNode,
   type SourceAnchor, type WorkflowLayout,
@@ -14,6 +14,8 @@ export interface EditorNode extends ProjectionNode {
   readonly category: EditorCategory;
   readonly editable?: { readonly field: "name"; readonly value: string };
   readonly canvasKind?: CanvasKind;
+  readonly canvasBranch?: true;
+  readonly lane?: CanvasLane;
 }
 export interface EditorGraph {
   readonly nodes: readonly EditorNode[];
@@ -21,6 +23,7 @@ export interface EditorGraph {
   readonly notice: string;
   readonly sequenceEdges: ReturnType<typeof canvasOrder>;
   readonly canvasEnabled: boolean;
+  readonly branchSupported: boolean;
 }
 interface Candidate {
   id: string;
@@ -31,7 +34,7 @@ interface Candidate {
   end: number;
   argument?: { start: number; end: number; value: string };
 }
-const NOTICE = "Solid arrows denote the exact sequential order in an explicitly managed canvas region. Dashed edges are illustrative layout hints only. Other TypeScript remains authoritative.";
+const NOTICE = "Solid arrows project canonical source control flow, including managed if/else branches; they are not Pi Durable task dependencies. Dashed edges remain illustrative. Other TypeScript is authoritative.";
 
 function fail(message: string): never { throw new ArtifactError("editor: " + message); }
 
@@ -129,11 +132,27 @@ export async function projectWorkflow(workflow: LoadedWorkflow): Promise<EditorG
     }
     nodes.push({
       id: step.id, category: "canvas", kind: "known",
-      canvasKind: step.type, label: "ports." + step.type + " (" + step.name + ")",
+      canvasKind: step.type, lane: step.lane, label: "ports." + step.type + " (" + step.name + ")",
       x: previous?.x ?? 70 + index * 280, y: previous?.y ?? 80,
       anchor: actual, editable: { field: "name", value: step.name },
     });
     positions.delete(step.id);
+  }
+  if (canvas?.branch) {
+    const branch = canvas.branch;
+    const previous = positions.get(branch.id);
+    const actual = await anchor(workflow.source, branch.start, branch.end);
+    if (previous && (previous.kind !== "known" || !previous.anchor ||
+        previous.anchor.start !== actual.start || previous.anchor.end !== actual.end ||
+        previous.anchor.sha256 !== actual.sha256)) {
+      fail("managed branch " + branch.id + " layout anchor is stale; reconcile source");
+    }
+    nodes.push({
+      id: branch.id, kind: "known", category: "branch", canvasBranch: true,
+      label: "If input.requiresApproval", x: previous?.x ?? 70,
+      y: previous?.y ?? 220, anchor: actual,
+    });
+    positions.delete(branch.id);
   }
   for (const other of positions.values()) {
     if (other.id.startsWith("ast_")) fail("layout contains orphaned AST node " + other.id + "; reconcile layout explicitly");
@@ -146,7 +165,7 @@ export async function projectWorkflow(workflow: LoadedWorkflow): Promise<EditorG
     });
   }
   return { nodes, edges: workflow.layout?.edges ?? [], sequenceEdges: canvasOrder(workflow.source),
-    canvasEnabled: Boolean(canvas), notice: NOTICE };
+    canvasEnabled: Boolean(canvas), branchSupported: supportedBranchCondition(workflow.source), notice: NOTICE };
 }
 
 /** Dragging may create layout.json, but never changes or reconstructs source. */

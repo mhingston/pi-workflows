@@ -29,6 +29,7 @@
         <button type="button" class="palette-step" data-kind="hook" draggable="true">+ Hook</button>
         <button type="button" class="palette-step" data-kind="agent" draggable="true">+ Agent</button>
         <button type="button" class="palette-step" data-kind="approval" draggable="true">+ Approval</button>
+        <button type="button" class="palette-step" data-kind="branch" draggable="true">+ IF branch</button>
         <small id="canvas-mode">Drag a step onto the canvas, or click to add it.</small>
       </div>
       <div id="viewport" aria-label="Drag-and-drop workflow canvas">
@@ -37,7 +38,7 @@
           <div id="nodes"></div>
         </div>
       </div>
-      <footer>Drag a step from the palette to add an executable statement inside the managed region. Drag its output handle to another step's input to place that step immediately after it. Solid arrows show source order; dashed edges remain illustrative only.</footer>
+      <footer>Drag a step from the palette to add an executable statement inside the managed region. Drag a step OUT to another IN to reorder it within the same lane; drag IF TRUE/FALSE to a step IN to move it into that arm. Disconnect in the inspector to move it after IF. Solid arrows are source-derived possible control flow, not runtime task dependencies.</footer>
       <section class="runtime" aria-label="Native runtime execution graph">
         <div class="panel-title">
           <strong>Native execution graph</strong>
