@@ -24,13 +24,20 @@
   <main>
     <section class="graph-panel" aria-label="Workflow projection">
       <div class="panel-title"><strong>Graph projection</strong><small id="notice"></small></div>
-      <div id="viewport">
+      <div class="palette" id="palette" aria-label="Available workflow steps">
+        <strong>Steps</strong>
+        <button type="button" class="palette-step" data-kind="hook" draggable="true">+ Hook</button>
+        <button type="button" class="palette-step" data-kind="agent" draggable="true">+ Agent</button>
+        <button type="button" class="palette-step" data-kind="approval" draggable="true">+ Approval</button>
+        <small id="canvas-mode">Drag a step onto the canvas, or click to add it.</small>
+      </div>
+      <div id="viewport" aria-label="Drag-and-drop workflow canvas">
         <div id="stage">
           <svg id="edges" role="img" aria-label="Illustrative visual edges"></svg>
           <div id="nodes"></div>
         </div>
       </div>
-      <footer>Drag nodes to save their layout. Dashed connections are illustrative only; no execution graph is inferred.</footer>
+      <footer>Drag a step from the palette to add an executable statement inside the managed region. Drag its output handle to another step's input to place that step immediately after it. Solid arrows show source order; dashed edges remain illustrative only.</footer>
       <section class="runtime" aria-label="Native runtime execution graph">
         <div class="panel-title">
           <strong>Native execution graph</strong>
