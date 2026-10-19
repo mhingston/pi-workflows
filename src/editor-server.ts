@@ -72,16 +72,18 @@ async function body(request: IncomingMessage): Promise<Record<string, unknown>> 
       request.headers["x-workflow-editor"] !== "1") {
     throw new Error("expected application/json and X-Workflow-Editor: 1");
   }
-  // setEncoding maintains an incomplete UTF-8 sequence across stream chunks.
-  request.setEncoding("utf8");
+  // Fatal streaming decoding retains split multibyte characters and rejects
+  // malformed UTF-8 instead of quietly inserting replacement characters.
+  const decoder = new TextDecoder("utf-8", { fatal: true });
   let value = "";
   let bytes = 0;
   for await (const part of request) {
-    const chunk = part as string;
-    bytes += Buffer.byteLength(chunk, "utf8");
+    const chunk = part as Buffer;
+    bytes += chunk.byteLength;
     if (bytes > 2_000_000) throw new Error("request too large (limit 2MB)");
-    value += chunk;
+    value += decoder.decode(chunk, { stream: true });
   }
+  value += decoder.decode();
   const parsed: unknown = JSON.parse(value);
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("invalid action object");
   return parsed as Record<string, unknown>;
