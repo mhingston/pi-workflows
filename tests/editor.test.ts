@@ -71,6 +71,29 @@ test("opaque callback is editable in the code pane with layout and hashes preser
   assert.ok((await projectWorkflow(edited)).nodes.some(n => n.id === "opaque_source"));
 });
 
+
+test("anchored custom callback can change in code without losing its source mapping", async () => {
+  const input = await files();
+  const marked = "const mapped = (n: number) => n * 2;";
+  const start = input.source.indexOf(marked);
+  assert.ok(start >= 0);
+  const layout = {
+    schemaVersion: 1, sourceSha256: await sha256(input.source),
+    nodes: [{
+      id: "callback", kind: "known", label: "Custom callback", x: 120, y: 60,
+      anchor: { start, end: start + marked.length, sha256: await sha256(marked) },
+    }],
+    edges: [],
+  };
+  const loaded = await loadWorkflow({ ...input, layoutJson: JSON.stringify(layout) });
+  const changed = await editCode(loaded, input.source.replace("n * 2;", "n * 3;"));
+  const span = changed.layout?.nodes.find(n => n.id === "callback")?.anchor;
+  assert.ok(span);
+  assert.equal(changed.source.slice(span.start, span.end), marked.replace("n * 2;", "n * 3;"));
+  assert.equal(span.sha256, await sha256(changed.source.slice(span.start, span.end)));
+  assert.equal((await projectWorkflow(changed)).nodes.find(n => n.id === "callback")?.category, "opaque");
+});
+
 test("unsafe edits and schema drift fail without silently dropping source", async () => {
   const input = await files();
   const original = await loadWorkflow(input);
