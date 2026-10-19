@@ -53,6 +53,50 @@ test("typed branch ports map to real if/else source and stable source-derived ed
   assert.equal(graph.edges.length, 0, "no runtime edges are invented");
 });
 
+test("empty IF arms keep distinct TRUE/FALSE continuation edges", async () => {
+  const branchOnly = await editCanvas(await load(), { type: "add-branch", x: 100, y: 80 });
+  const branch = readCanvas(branchOnly.source)!.branch!.id;
+  const continuation = await editCanvas(branchOnly, { type: "add-step",
+    kind: "hook", name: "continuation", x: 500, y: 150 });
+  const after = readCanvas(continuation.source)!.steps[0]!.id;
+  const edges = canvasOrder(continuation.source).filter(e => e.from === branch && e.to === after);
+  assert.deepEqual(edges.map(e => e.kind).sort(), ["else", "then"],
+    "both empty arms must retain independent output-port identity");
+  assert.notEqual(edges[0]!.id, edges[1]!.id);
+
+  // Moving the first continuation into TRUE leaves FALSE empty, and a new
+  // continuation must join from the TRUE tail and the FALSE output.
+  const inTrue = await editCanvas(continuation, { type: "connect-branch",
+    from: branch, to: after, arm: "then" });
+  const next = await editCanvas(inTrue, { type: "add-step", kind: "hook",
+    name: "after", x: 780, y: 150 });
+  const finalId = readCanvas(next.source)!.steps.find(s => s.name === "after")!.id;
+  const joinEdges = canvasOrder(next.source).filter(e => e.to === finalId);
+  assert.ok(joinEdges.some(e => e.from === after && e.kind === "join"));
+  assert.ok(joinEdges.some(e => e.from === branch && e.kind === "else"));
+  assert.ok(!joinEdges.some(e => e.from === branch && e.kind === "join"));
+});
+
+test("shadowing generic WorkflowInput cannot enable branch authoring", async () => {
+  const shadowed = source.replace(
+    "runWorkflow(input: WorkflowInput, ports: WorkflowPorts)",
+    "runWorkflow<WorkflowInput>(input: WorkflowInput, ports: WorkflowPorts)",
+  );
+  assert.notEqual(shadowed, source);
+  const initial = await load(shadowed);
+  const graph = await projectWorkflow(initial);
+  assert.equal(graph.branchSupported, false);
+  await assert.rejects(editCanvas(initial, { type: "add-branch", x: 100, y: 80 }),
+    /requires WorkflowInput.requiresApproval: boolean/);
+  const withBranch = (await withArms()).both.source.replace(
+    "runWorkflow(input: WorkflowInput, ports: WorkflowPorts)",
+    "runWorkflow<WorkflowInput>(input: WorkflowInput, ports: WorkflowPorts)",
+  );
+  await assert.rejects(projectWorkflow(await load(withBranch)),
+    /requires WorkflowInput.requiresApproval: boolean/,
+    "pre-existing graphical branches also fail closed after generic shadowing");
+});
+
 test("branch rewrite moves steps between lanes, adds a real join, and restores source on removal", async () => {
   const { both, branchId, trueId, falseId } = await withArms();
   const post = await editCanvas(both, { type: "add-step", kind: "agent", name: "after-if", x: 750, y: 180 });
