@@ -6,7 +6,8 @@
  * This local filesystem store is not a tamper-proof signing service; it is an
  * immutable API with corruption detection. No source code is executed here.
  */
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { link, mkdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { exportWorkflow, loadWorkflow, sha256, type LoadedWorkflow, type WorkflowFiles } from "./artifact.ts";
@@ -40,8 +41,13 @@ function checkBinding(artifact: LoadedWorkflow, binding: PublicationBinding): vo
   validateDescriptor(binding.runtime);
   requireCapabilities(binding.runtime, artifact.manifest.requiredCapabilities);
   if (binding.codeExecutor) validateDescriptor(binding.codeExecutor);
-  if (artifact.manifest.requiredCapabilities.includes("dynamic_code") && !binding.codeExecutor) {
-    throw new PublicationError("Dynamic code requires an explicitly selected code executor");
+  if (artifact.manifest.requiredCapabilities.includes("dynamic_code")) {
+    if (!binding.codeExecutor) {
+      throw new PublicationError("Dynamic code requires an explicitly selected code executor");
+    }
+    // A well-formed descriptor is not evidence that the executor implements
+    // the operation. Validate support on the executor, not only the runtime.
+    requireCapabilities(binding.codeExecutor, ["dynamic_code"]);
   }
   const declared = artifact.manifest.dependencies;
   const actual = binding.resolvedDependencies;
@@ -86,12 +92,26 @@ export class FilePublicationStore implements WorkflowStorage {
     const record: PublishedRecord = { ...body, revisionId };
     const path = this.filename(revisionId);
     await mkdir(this.directory, { recursive: true, mode: 0o700 });
+    // Write the complete revision under a unique name first, then atomically
+    // install it with a hard link in the SAME directory. Unlike rename(), link()
+    // cannot replace a published revision; concurrent publishers are safe and
+    // readers never observe a partially written destination.
+    const temporaryPath = join(this.directory, "." + revisionId + "." + randomUUID() + ".tmp");
     try {
-      await writeFile(path, JSON.stringify(record), { flag: "wx", mode: 0o600 });
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      await writeFile(temporaryPath, JSON.stringify(record), { flag: "wx", mode: 0o600 });
+      try {
+        await link(temporaryPath, path);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      }
+    } finally {
+      // A crash may leave an orphaned .tmp file, but cannot expose a partial
+      // published revision. Re-publishing remains possible.
+      await unlink(temporaryPath).catch(error => {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      });
     }
-    // Also detects corrupt or incomplete existing publications.
+    // Also detects corruption in a previously installed publication.
     const existing = await this.get(revisionId);
     if (!isDeepStrictEqual(exportWorkflow(existing.artifact), body.files) ||
         !isDeepStrictEqual(existing.binding, body.binding)) {
