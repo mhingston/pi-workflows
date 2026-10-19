@@ -98,11 +98,13 @@ export async function startEditor(folder: string, port = 4175) {
     response.setHeader("x-content-type-options", "nosniff");
     try {
       // This service must not be exposed on a public or LAN interface.
+      const boundAddress = server.address();
+      const activePort = boundAddress && typeof boundAddress !== "string" ? boundAddress.port : port;
       const host = String(request.headers.host ?? "");
-      if (!new RegExp("^(localhost|127\\.0\\.0\\.1):" + port + "$").test(host)) {
+      if (!new RegExp("^(localhost|127\\.0\\.0\\.1):" + activePort + "$").test(host)) {
         json(response, 403, { error: "localhost only" }); return;
       }
-      const url = new URL(request.url ?? "/", "http://localhost:" + port);
+      const url = new URL(request.url ?? "/", "http://localhost:" + activePort);
       if (request.method === "GET" && url.pathname === "/api/state") {
         json(response, 200, {
           revision, dirty: JSON.stringify(exportWorkflow(workflow)) !== JSON.stringify(saved),
@@ -112,7 +114,7 @@ export async function startEditor(folder: string, port = 4175) {
       }
       if (request.method === "POST" && url.pathname === "/api/action") {
         const origin = request.headers.origin;
-        if (origin && origin !== "http://localhost:" + port && origin !== "http://127.0.0.1:" + port) {
+        if (origin && origin !== "http://localhost:" + activePort && origin !== "http://127.0.0.1:" + activePort) {
           json(response, 403, { error: "cross-origin changes are forbidden" }); return;
         }
         const action = await body(request);
