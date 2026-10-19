@@ -39,10 +39,10 @@ test("multiple separate source edits keep every unrelated mixed line ending", ()
   );
 });
 
-test("insert and remove lines without changing the EOL style of surviving lines", () => {
+test("replacing a line preserves its own EOL and those of surviving lines", () => {
   const source = "alpha\r\nbeta\ncharlie\r\n";
   assert.equal(
     sourceFromTextarea(source, "alpha\ninserted\ncharlie\n"),
-    "alpha\r\ninserted\r\ncharlie\r\n",
+    "alpha\r\ninserted\ncharlie\r\n",
   );
 });
