@@ -9,7 +9,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "smoke:durable": "node --experimental-strip-types spikes/issue-1/durable.ts",
     "test:artifact": "node --experimental-strip-types --test tests/artifact.test.ts",
-    "test:durable": "node --experimental-strip-types --test tests/durable.test.ts",
+    "test:durable": "node --experimental-strip-types --test tests/durable.test.ts tests/durable-idempotency.test.ts",
     "test:invocation": "node --experimental-strip-types --test tests/invocation.test.ts",
     "editor": "node --experimental-strip-types src/editor-server.ts",
     "test:editor": "node --experimental-strip-types --test tests/editor.test.ts tests/source-text.test.mjs",
