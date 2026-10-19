@@ -122,6 +122,11 @@ test("unsupported graph shapes, ambiguous anchors and opaque code are rejected",
     { type: "remove-step", id: falseId }), /unsupported statement/);
   const duplicate = both.source.replace(falseId, trueId);
   await assert.rejects(projectWorkflow(await load(duplicate)), /duplicate managed id/);
+  const untyped = source.replace("requiresApproval: boolean;", "requiresApproval: number;");
+  await assert.rejects(editCanvas(await load(untyped), { type: "add-branch", x: 0, y: 0 }),
+    /requires WorkflowInput.requiresApproval: boolean/);
+  const untypedExisting = both.source.replace("requiresApproval: boolean;", "requiresApproval: number;");
+  await assert.rejects(projectWorkflow(await load(untypedExisting)), /requires WorkflowInput.requiresApproval: boolean/);
   const moved = await editCanvas(both, { type: "rename-step", id: trueId, name: "renamed" });
   const layout = JSON.parse(moved.files.layoutJson!) as {
     nodes: Array<{ id: string; anchor?: { start: number; end: number; sha256: string } }>;
