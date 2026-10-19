@@ -32,6 +32,8 @@ Only the recognized string literal is changed by this graph property. The code p
 
 ## Reading the graph
 
+This is not a freeform n8n-style canvas yet. Dragging an existing node only changes its saved layout position; the canvas cannot add or remove nodes or draw execution connections.
+
 - **Blue call nodes** represent recognized `ports.hook`, `ports.agent`, or `ports.approve` calls. Only a string-literal name on a recognized call is editable as a node property.
 - **Branch, parallel, and dynamic nodes** show structures found in the source. Loops, branches, and fan-out are not rewritten through graph operations.
 - **Opaque nodes** stand for code the graph does not model. The complete TypeScript stays authoritative in the source pane.
