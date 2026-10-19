@@ -20,6 +20,8 @@ See [architecture handoff](docs/HANDOFF.md), [artifact contract](docs/artifact-f
 
 **Browser editor (issue #5):** run `npm run editor -- --workflow ./fixtures/complex` and open `http://localhost:4175`. Drag nodes, inspect/edit known literal call names, or edit arbitrary source in the code pane; save only after validation. Unknown code is never reconstructed from the graph. See [editor safety and limitations](docs/visual-editor.md).
 
+**Integration gate (issue #6):** one version-pinned source package is projected and no-op saved in the editor, invoked via both Pi entry points, then verified against native Pi Durable records and restart/ambiguous-effect tests. See [reproducible integration demo, evidence and GO/NO-GO](docs/integration-gate.md).
+
 ## Verification
 
 Requires Node >=22.19.
@@ -31,6 +33,7 @@ npm run test:artifact
 npm run test:durable
 npm run test:invocation
 npm run test:editor
+npm run test:gate
 ```
 
 This project is independent of the similarly named
