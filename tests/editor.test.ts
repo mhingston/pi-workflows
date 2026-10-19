@@ -3,6 +3,7 @@ import test from "node:test";
 import { readFile, mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { request as httpRequest } from "node:http";
 import { exportWorkflow, loadWorkflow, sha256, type WorkflowFiles } from "../src/artifact.ts";
 import { editCode, editKnownName, moveProjectedNode, projectWorkflow } from "../src/editor.ts";
 import { startEditor } from "../src/editor-server.ts";
@@ -150,6 +151,92 @@ test("local browser viewer serves a versioned package without invoking the workf
       const running = server;
       await new Promise<void>((done, reject) =>
         running.close(error => error ? reject(error) : done()));
+    }
+    await rm(folder, { recursive: true, force: true });
+  }
+});
+
+test("split UTF-8 HTTP chunks round-trip Unicode literal values without replacement chars", async () => {
+  const folder = await mkdtemp(join(tmpdir(), "pi-workflow-unicode-"));
+  let server: Awaited<ReturnType<typeof startEditor>> | undefined;
+  try {
+    const input = await files();
+    await writeFile(join(folder, "workflow.ts"), input.source);
+    await writeFile(join(folder, "workflow.json"), input.manifestJson);
+    server = await startEditor(folder, 0);
+    const address = server.address();
+    assert.ok(address && typeof address !== "string");
+    const name = "日本 🍃 naïve";
+    const payload = Buffer.from(JSON.stringify({
+      type: "property", id: "ast_hook_1", value: name, revision: 0,
+    }), "utf8");
+    const split = payload.indexOf(Buffer.from("🍃")) + 2;
+    assert.ok(split > 2 && split < payload.length);
+    const status = await new Promise<{ status: number; body: string }>((resolve, reject) => {
+      const req = httpRequest({
+        hostname: "127.0.0.1", port: address.port, path: "/api/action", method: "POST",
+        headers: { "content-type": "application/json", "x-workflow-editor": "1" },
+      }, res => {
+        res.setEncoding("utf8");
+        let body = "";
+        res.on("data", chunk => { body += chunk; });
+        res.on("end", () => resolve({ status: res.statusCode ?? 0, body }));
+      });
+      req.on("error", reject);
+      req.write(payload.subarray(0, split));
+      setTimeout(() => req.end(payload.subarray(split)), 20);
+    });
+    assert.equal(status.status, 200, status.body);
+    const updated = JSON.parse(status.body) as { files: WorkflowFiles };
+    assert.match(updated.files.source, /日本 🍃 naïve/);
+    assert.ok(!updated.files.source.includes("\uFFFD"), "no replacement characters introduced by chunk split");
+    const workflow = await loadWorkflow(updated.files);
+    const graph = await projectWorkflow(workflow);
+    assert.equal(graph.nodes.find(n => n.id === "ast_hook_1")?.editable?.value, name);
+  } finally {
+    if (server) {
+      const running = server;
+      await new Promise<void>((done, reject) => running.close(error => error ? reject(error) : done()));
+    }
+    await rm(folder, { recursive: true, force: true });
+  }
+});
+
+test("concurrent stale edits and save requests serialize and return HTTP 409", async () => {
+  const folder = await mkdtemp(join(tmpdir(), "pi-workflow-concurrency-"));
+  let server: Awaited<ReturnType<typeof startEditor>> | undefined;
+  try {
+    const input = await files();
+    await writeFile(join(folder, "workflow.ts"), input.source);
+    await writeFile(join(folder, "workflow.json"), input.manifestJson);
+    server = await startEditor(folder, 0);
+    const address = server.address();
+    assert.ok(address && typeof address !== "string");
+    const base = "http://127.0.0.1:" + address.port;
+    const post = (revision: number, type: string, x?: number) =>
+      fetch(base + "/api/action", {
+        method: "POST", headers: { "content-type": "application/json", "x-workflow-editor": "1" },
+        body: JSON.stringify({ type, id: "ast_hook_1", x, y: 100, revision }),
+      });
+    const [first, second] = await Promise.all([post(0, "move", 300), post(0, "move", 400)]);
+    assert.deepEqual([first.status, second.status].sort(), [200, 409]);
+    const initialState = await fetch(base + "/api/state").then(r => r.json()) as {
+      revision: number; graph: { nodes: Array<{ id: string; x: number }> };
+    };
+    assert.equal(initialState.revision, 1);
+    const node = initialState.graph.nodes.find(n => n.id === "ast_hook_1");
+    assert.ok(node && [300, 400].includes(node.x));
+    const [save, moved] = await Promise.all([post(1, "save"), post(1, "move", 500)]);
+    assert.deepEqual([save.status, moved.status].sort(), [200, 409]);
+    const final = await fetch(base + "/api/state").then(r => r.json()) as { revision: number };
+    assert.equal(final.revision, 2);
+    // A failed action does not poison the queue; a request with a fresh revision succeeds.
+    const accepted = await post(2, "move", 520);
+    assert.equal(accepted.status, 200, await accepted.text());
+  } finally {
+    if (server) {
+      const running = server;
+      await new Promise<void>((done, reject) => running.close(error => error ? reject(error) : done()));
     }
     await rm(folder, { recursive: true, force: true });
   }
