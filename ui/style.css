@@ -76,3 +76,12 @@ h3 { color: #d7e5f1; }
 .properties select { width: 100%; padding: 8px; color: #fff; background: #1d2938; border: 1px solid #6c8598; border-radius: 5px; }
 button.danger { margin: 10px 0; background: #552a30; border-color: #b46f7b; }
 @media (max-width: 850px) { .palette { flex-wrap: wrap; } }
+
+/* Canonical IF branch authoring; visual ports reflect code branches, not durable task edges. */
+.node.branch:has(.port) { padding-right: 46px; min-height: 102px; }
+.port.output.then { top: 18px; background: #305c45; }
+.port.output.else { top: 55px; background: #5b403c; }
+.edge.source-edge { stroke: #72c7b5; stroke-width: 3; stroke-dasharray: none; opacity: 1; }
+.edge.source-edge.then { stroke: #8bd0a7; }
+.edge.source-edge.else { stroke: #d3aa83; }
+.edge.source-edge.join { stroke: #86b2df; }
