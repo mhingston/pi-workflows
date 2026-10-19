@@ -96,3 +96,90 @@ test("fixed smoke endpoint does not accept uploaded source or input", async () =
   assert.deepEqual(await response.json(), { result: 3 }); // Stub proof only; not Cloudflare sandbox execution.
   assert.equal(f.calls.length, 1);
 });
+
+test("source and permission snapshot survive mutation during pending authorization and deferred loading", async () => {
+  const f = await fixture();
+  let enterAuthorization;
+  let allowAuthorization;
+  const entered = new Promise(resolve => { enterAuthorization = resolve; });
+  const released = new Promise(resolve => { allowAuthorization = resolve; });
+  const originalUnit = { ...f.unit };
+  let checkedSnapshot;
+  const executor = await createCloudflareCodeExecutor({
+    loader: f.loader,
+    authorize: async snapshot => {
+      checkedSnapshot = snapshot;
+      enterAuthorization();
+      await released;
+      return snapshot.authorizationId === originalUnit.authorizationId &&
+        snapshot.sourceSha256 === originalUnit.sourceSha256 &&
+        snapshot.source === originalUnit.source;
+    },
+  });
+  const started = executor.execute(f.unit, { values: [1, 2, 3] });
+  await entered;
+  assert.notEqual(checkedSnapshot, f.unit);
+  assert.ok(Object.isFrozen(checkedSnapshot), "authorization must use an immutable copy");
+  try {
+    f.unit.source = "export default () => 'unauthorized';";
+    f.unit.sourceSha256 = await sha256(f.unit.source);
+    f.unit.authorizationId = "spoofed";
+  } finally {
+    allowAuthorization();
+  }
+  assert.equal(await started, 3);
+  assert.equal(f.calls.length, 1);
+  assert.equal(f.calls[0].id.endsWith(originalUnit.sourceSha256), true);
+  // This callback is intentionally evaluated after the original unit has changed.
+  const config = await f.calls[0].callback();
+  assert.equal(config.modules["unit.js"], originalUnit.source);
+  assert.deepEqual(checkedSnapshot, originalUnit);
+});
+
+test("Loader and Worker invocation exceptions never leak their raw cause", async () => {
+  const f = await fixture();
+  const secret = "API_TOKEN_dont_print_me";
+  const attempts = [
+    { get: () => { throw new Error("Loader: " + secret); } },
+    { get: () => ({ getEntrypoint() { throw new Error("module eval: " + secret); } }) },
+    { get: () => ({ getEntrypoint: () => ({
+      fetch: async () => { throw new Error("worker fetch: " + secret); },
+    }) }) },
+    { get: () => ({ getEntrypoint: () => ({
+      fetch: async () => { throw new Error("module load: " + secret); },
+    }) }) },
+  ];
+  for (const loader of attempts) {
+    const executor = await createCloudflareCodeExecutor({ loader, authorize: async () => true });
+    await assert.rejects(executor.execute(f.unit, { values: [] }), error => {
+      assert.equal(error.message, "Sandbox invocation failed");
+      assert.ok(!JSON.stringify(error).includes(secret));
+      assert.equal(error.cause, undefined);
+      return true;
+    });
+  }
+});
+
+test("stream read errors and non-serializable inputs are sanitized", async () => {
+  const f = await fixture();
+  const secret = "sensitive error internal";
+  const executor = await createCloudflareCodeExecutor({
+    authorize: async () => true,
+    loader: { get: () => ({ getEntrypoint: () => ({
+      fetch: async () => new Response(new ReadableStream({
+        pull() { throw new Error(secret); },
+      })),
+    }) }) },
+  });
+  await assert.rejects(executor.execute(f.unit, {}), error => {
+    assert.equal(error.message, "Sandbox response read failed");
+    assert.equal(error.cause, undefined);
+    return true;
+  });
+  const input = { get data() { throw new Error(secret); } };
+  await assert.rejects(executor.execute(f.unit, input), error => {
+    assert.equal(error.message, "Sandbox input is not JSON serializable");
+    assert.equal(error.cause, undefined);
+    return true;
+  });
+});
