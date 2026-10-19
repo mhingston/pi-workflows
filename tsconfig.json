@@ -7,7 +7,10 @@
     "noEmit": true,
     "skipLibCheck": true,
     "allowImportingTsExtensions": true,
-    "types": ["node"]
+    "types": [
+      "node"
+    ],
+    "esModuleInterop": true
   },
   "include": [
     "spikes/issue-1/**/*.ts",
