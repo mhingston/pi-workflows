@@ -39,8 +39,13 @@ The local store lives at `.pi/workflow-publications/<sha256>.json` (override
 with `publicationDir`). The immutable envelope includes the exact original
 source/manifest/layout bytes, installed dependency versions, runtime ID and
 version, and implementation fingerprint. The publication ID hashes the whole
-envelope. Writes are create-only; all reads re-verify the envelope fingerprint,
-source digest, dependency pins and capabilities. Tampered revisions fail closed.
+envelope. A complete temporary file is atomically installed through a create-only
+hard link in the same directory, so concurrent publishers cannot expose partial
+revisions or overwrite an existing revision. Abandoned temporary files after a
+crash are non-executable and can be cleaned up independently. Publication requires
+a filesystem supporting same-directory hard links. All reads re-verify the
+envelope fingerprint, source digest, dependency pins and capabilities. Tampered
+revisions fail closed.
 A new source, dependency, implementation or layout yields a different revision.
 
 For this bounded adapter, the installed Pi Durable package version is read from
@@ -63,7 +68,8 @@ inspection do not assert exactly-once external effects.
 Only `dynamic_agents@1.0.0` backed by the checked-in trusted module can be
 executed. Publication alone never authorizes arbitrary source imports or code
 execution. The registry exposes a `CodeExecutor` contract, not a deployed
-sandbox. Provider-specific options stay in TypeScript source/adapter code and
+sandbox. A workflow requiring `dynamic_code` must select an executor that
+explicitly advertises that capability; a valid descriptor alone is insufficient. Provider-specific options stay in TypeScript source/adapter code and
 must declare a corresponding provider capability in the manifest. The editor
 graph remains illustrative metadata; no provider semantics are pushed into it.
 
