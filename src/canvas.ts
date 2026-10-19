@@ -79,6 +79,28 @@ function supportedScope(source: string, start: number, end: number): boolean {
   visit(file);
   return found;
 }
+/**
+ * This first authoring contract is intentionally fixture-specific. Checking
+ * the actual local input interface prevents a visual edit from emitting an
+ * untyped or nonexistent property access. Imported aliases or unions remain
+ * code-only until a full typechecked condition editor exists.
+ */
+export function supportedBranchCondition(source: string): boolean {
+  const file = ts.createSourceFile("workflow.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const declarations = file.statements.filter((s): s is ts.InterfaceDeclaration =>
+    ts.isInterfaceDeclaration(s) && s.name.text === "WorkflowInput");
+  const runs = file.statements.filter((s): s is ts.FunctionDeclaration =>
+    ts.isFunctionDeclaration(s) && s.name?.text === "runWorkflow");
+  if (declarations.length !== 1 || runs.length !== 1) return false;
+  const paramType = runs[0]!.parameters[0]?.type;
+  if (!paramType || !ts.isTypeReferenceNode(paramType) ||
+      !ts.isIdentifier(paramType.typeName) || paramType.typeName.text !== "WorkflowInput" ||
+      paramType.typeArguments?.length) return false;
+  const fields = declarations[0]!.members.filter((m): m is ts.PropertySignature =>
+    ts.isPropertySignature(m) && ts.isIdentifier(m.name) && m.name.text === "requiresApproval");
+  return fields.length === 1 && !fields[0]!.questionToken &&
+    fields[0]!.type?.kind === ts.SyntaxKind.BooleanKeyword;
+}
 function comments(source: string): Set<number> {
   const scanner = ts.createScanner(ts.ScriptTarget.Latest, false, ts.LanguageVariant.Standard, source);
   const offsets = new Set<number>();
@@ -138,6 +160,7 @@ export function readCanvas(source: string): CanvasRegion | null {
     const match = branchRegex.exec(body.slice(cursor));
     if (!match) fail("unrecognized code in canvas region; edit source manually");
     if (branch) fail("only one source-mapped if/else branch is supported");
+    if (!supportedBranchCondition(source)) fail("IF branch requires WorkflowInput.requiresApproval: boolean");
     if (!commentOffsets.has(start + cursor + indent.length)) fail("branch marker is not a standalone comment");
     const beginning = cursor;
     unique(match[1]!);
@@ -243,6 +266,7 @@ export async function editCanvas(workflow: LoadedWorkflow, operation: CanvasOper
     case "add-branch": {
       position(operation.x, operation.y);
       if (branch) fail("only one source-mapped branch is supported");
+      if (!supportedBranchCondition(workflow.source)) fail("IF branch requires WorkflowInput.requiresApproval: boolean");
       const id = newId();
       branch = { id, type: "branch", start: 0, end: 0, then: [], else: [] };
       items.push(branch); added = { id, x: operation.x, y: operation.y };
