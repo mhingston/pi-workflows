@@ -3,7 +3,7 @@
  * Graph nodes are authoring hints. Neither this module nor the UI evaluates TS.
  */
 import ts from "typescript";
-import { canvasOrder, readCanvas, type CanvasKind, type CanvasLane } from "./canvas.ts";
+import { canvasOrder, readCanvas, supportedBranchCondition, type CanvasKind, type CanvasLane } from "./canvas.ts";
 import {
   ArtifactError, loadWorkflow, sha256, type LoadedWorkflow, type ProjectionNode,
   type SourceAnchor, type WorkflowLayout,
@@ -23,6 +23,7 @@ export interface EditorGraph {
   readonly notice: string;
   readonly sequenceEdges: ReturnType<typeof canvasOrder>;
   readonly canvasEnabled: boolean;
+  readonly branchSupported: boolean;
 }
 interface Candidate {
   id: string;
@@ -164,7 +165,7 @@ export async function projectWorkflow(workflow: LoadedWorkflow): Promise<EditorG
     });
   }
   return { nodes, edges: workflow.layout?.edges ?? [], sequenceEdges: canvasOrder(workflow.source),
-    canvasEnabled: Boolean(canvas), notice: NOTICE };
+    canvasEnabled: Boolean(canvas), branchSupported: supportedBranchCondition(workflow.source), notice: NOTICE };
 }
 
 /** Dragging may create layout.json, but never changes or reconstructs source. */
