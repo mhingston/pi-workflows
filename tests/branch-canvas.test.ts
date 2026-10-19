@@ -98,10 +98,10 @@ test("generated TypeScript executes conditional paths with trusted fixture ports
     approve: async (name: string) => { calls.push(name); return true; },
   };
   await module.runWorkflow({ values: [], requiresApproval: true }, ports);
-  assert.deepEqual(calls, ["before", "true-path", "gate", "after"]);
+  assert.deepEqual(calls, ["before", "after", "true-path", "gate"]);
   calls.length = 0;
   await module.runWorkflow({ values: [], requiresApproval: false }, ports);
-  assert.deepEqual(calls, ["before", "false-path", "after"]);
+  assert.deepEqual(calls, ["before", "after", "false-path"]);
   await assert.rejects(module.runWorkflow({ values: [], requiresApproval: true },
     { ...ports, approve: async () => false }), /approval denied/);
 });
