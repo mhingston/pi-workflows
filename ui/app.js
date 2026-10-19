@@ -88,10 +88,11 @@ function render() {
   const enabled = Boolean(state.graph.canvasEnabled);
   $("palette").classList.toggle("unavailable", !enabled);
   $("canvas-mode").textContent = enabled
-    ? "Drag steps to author TypeScript; one IF branch may route steps to TRUE/FALSE arms."
+    ? (state.graph.branchSupported ? "Drag steps to author TypeScript; one IF branch may route steps to TRUE/FALSE arms." :
+      "Linear authoring only: IF branches require a local WorkflowInput.requiresApproval: boolean.")
     : "Visual authoring disabled: add canvas-start/end markers inside runWorkflow in TypeScript.";
   for (const button of document.querySelectorAll(".palette-step")) button.disabled = !enabled ||
-    (button.dataset.kind === "branch" && state.graph.nodes.some(n => n.canvasBranch));
+    (button.dataset.kind === "branch" && (!state.graph.branchSupported || state.graph.nodes.some(n => n.canvasBranch)));
   closeDownloads(); // Existing Blob URLs refer to an older artifact snapshot.
   if ($("code").value === displaySource(state.files.source)) codeDraft = false;
   if (!codeDraft) $("code").value = displaySource(state.files.source);
