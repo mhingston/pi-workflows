@@ -59,7 +59,9 @@ test("native child tasks, conditional dynamic fan-out and controlled recovery", 
     }
     assert.equal(approvals, 0, "no approval necessary");
     const record = await harness.getTask(id, ctx);
-    assert.equal(record?.input.sourceSha256, artifact.manifest.sourceSha256);
+    const storedInput = record?.input;
+    assert.ok(storedInput && typeof storedInput === "object" && !Array.isArray(storedInput));
+    assert.equal(storedInput.sourceSha256, artifact.manifest.sourceSha256);
     console.log("PASS: parent + 3 native children resumed, output 12; no duplicate child receipts");
   } finally {
     await harness.close(ctx).catch(() => {});
