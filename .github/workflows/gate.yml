@@ -39,6 +39,8 @@ jobs:
         run: npm run test:providers
       - name: Both Pi invocation adapters
         run: npm run test:invocation
+      - name: Native run correlation and editor inspection
+        run: npm run test:correlation
       - name: End-to-end release gate
         run: npm run test:gate
       - name: Real Pi command smoke (no LLM credentials)
