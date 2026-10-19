@@ -189,8 +189,14 @@ export function createWorkflowInvocationService(config: InvocationConfig): Workf
           })),
         };
         const fixture = registerFixtureWorkflow(current.artifact, effect, expected);
+        // The fixture persists this exact field order when creating RunInput.
+        // Never hash caller object insertion order: both Pi invocation paths may
+        // receive equivalent JSON with different property ordering.
         const typed = request.input as WorkflowInput;
-        const pin = { ...expected, inputSha256: await sha256(JSON.stringify(typed)) };
+        const persistedInput: WorkflowInput = {
+          values: typed.values, requiresApproval: typed.requiresApproval,
+        };
+        const pin = { ...expected, inputSha256: await sha256(JSON.stringify(persistedInput)) };
         await mkdir(dirname(dbPath), { recursive: true });
         const ctx = BACKGROUND_CONTEXT;
         const harness = await Harness.open(await openNodeSqliteStorage(dbPath),
