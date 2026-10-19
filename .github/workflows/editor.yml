@@ -9,6 +9,7 @@ on:
       - "ui/**"
       - "fixtures/**"
       - "tests/editor.test.ts"
+      - "tests/branch-canvas.test.ts"
       - "src/artifact.ts"
       - "package.json"
       - "tsconfig.json"
