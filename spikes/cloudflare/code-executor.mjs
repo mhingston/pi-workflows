@@ -10,6 +10,7 @@ const MAX_OUTPUT_BYTES = 16 * 1024;
 const CPU_MS = 50;
 const SUBREQUESTS = 1;
 const ENCODER = new TextEncoder();
+class SandboxResponseLimit extends Error {}
 
 // Imported as a distinct module: never interpolate user-controlled JS into the wrapper.
 const RUNNER_SOURCE = `import run from "./unit.js";
@@ -45,7 +46,7 @@ async function boundedText(response) {
       const { value, done } = await reader.read();
       if (done) break;
       length += value.byteLength;
-      if (length > MAX_OUTPUT_BYTES) throw new Error("Sandbox response exceeds size limit");
+      if (length > MAX_OUTPUT_BYTES) throw new SandboxResponseLimit("Sandbox response exceeds size limit");
       chunks.push(value);
     }
   } finally {
@@ -78,37 +79,60 @@ export async function createCloudflareCodeExecutor({ loader, authorize }) {
       capabilities: ["dynamic_code"],
     },
     async execute(unit, input) {
-      if (!unit || typeof unit.source !== "string" ||
-          typeof unit.authorizationId !== "string" || !unit.authorizationId ||
-          typeof unit.sourceSha256 !== "string" ||
-          ENCODER.encode(unit.source).length > MAX_SOURCE_BYTES) {
+      // Caller-owned objects can change during authorization or before the Loader
+      // invokes its deferred callback. Only the immutable snapshot is trusted.
+      const approvedUnit = unit && typeof unit === "object" ? Object.freeze({
+        source: unit.source,
+        sourceSha256: unit.sourceSha256,
+        authorizationId: unit.authorizationId,
+      }) : null;
+      if (!approvedUnit || typeof approvedUnit.source !== "string" ||
+          typeof approvedUnit.authorizationId !== "string" || !approvedUnit.authorizationId ||
+          typeof approvedUnit.sourceSha256 !== "string" ||
+          ENCODER.encode(approvedUnit.source).length > MAX_SOURCE_BYTES) {
         throw new Error("Invalid approved code unit");
       }
-      if (await sha256(unit.source) !== unit.sourceSha256) {
+      if (await sha256(approvedUnit.source) !== approvedUnit.sourceSha256) {
         throw new Error("Code integrity check failed");
       }
       // Authorization must be resolved by trusted host policy, NOT by the unit itself.
-      if (await authorize(unit) !== true) throw new Error("Code unit not authorized");
-      const body = JSON.stringify(input);
+      if (await authorize(approvedUnit) !== true) throw new Error("Code unit not authorized");
+      let body;
+      try { body = JSON.stringify(input); }
+      catch { throw new Error("Sandbox input is not JSON serializable"); }
       if (typeof body !== "string" || ENCODER.encode(body).length > MAX_INPUT_BYTES) {
         throw new Error("Sandbox input exceeds size limit or is not JSON serializable");
       }
       // Include wrapper/policy digest in ID; code and configuration must remain immutable.
-      const workerId = `piw-${policyId}-${unit.sourceSha256}`;
-      const worker = loader.get(workerId, async () => ({
-        compatibilityDate: COMPATIBILITY_DATE,
-        mainModule: "runner.js",
-        modules: { "runner.js": RUNNER_SOURCE, "unit.js": unit.source },
-        globalOutbound: null, // Cloudflare default is otherwise public network access.
-        env: {}, // No parent secrets or service bindings reach the untrusted Worker.
-        limits: { cpuMs: CPU_MS, subRequests: SUBREQUESTS },
-      }));
-      // This is an in-process Request handed to the WorkerStub, NOT a network fetch.
-      const result = await worker.getEntrypoint().fetch(new Request("https://isolated.invalid/execute", {
-        method: "POST", headers: { "content-type": "application/json" }, body,
-      }));
-      if (!result || typeof result.status !== "number") throw new Error("Invalid sandbox response");
-      const text = await boundedText(result);
+      const workerId = `piw-${policyId}-${approvedUnit.sourceSha256}`;
+      let result;
+      try {
+        const worker = loader.get(workerId, async () => ({
+          compatibilityDate: COMPATIBILITY_DATE,
+          mainModule: "runner.js",
+          modules: { "runner.js": RUNNER_SOURCE, "unit.js": approvedUnit.source },
+          globalOutbound: null, // Cloudflare default is otherwise public network access.
+          env: {}, // No parent secrets or service bindings reach the untrusted Worker.
+          limits: { cpuMs: CPU_MS, subRequests: SUBREQUESTS },
+        }));
+        // This is an in-process Request handed to the WorkerStub, NOT a network fetch.
+        result = await worker.getEntrypoint().fetch(new Request("https://isolated.invalid/execute", {
+          method: "POST", headers: { "content-type": "application/json" }, body,
+        }));
+        if (!result || typeof result.status !== "number" || typeof result.ok !== "boolean") {
+          throw new Error("Invalid sandbox response");
+        }
+      } catch {
+        // Also handles user-module evaluation failures before the fetch handler runs.
+        // Never expose Worker errors, stack traces, causes or secrets to the caller.
+        throw new Error("Sandbox invocation failed");
+      }
+      let text;
+      try { text = await boundedText(result); }
+      catch (error) {
+        if (error instanceof SandboxResponseLimit) throw new Error("Sandbox response exceeds size limit");
+        throw new Error("Sandbox response read failed");
+      }
       if (!result.ok) throw new Error(`Sandbox execution failed (HTTP ${result.status})`);
       let parsed;
       try { parsed = JSON.parse(text); }
