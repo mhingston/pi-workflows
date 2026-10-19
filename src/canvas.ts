@@ -92,6 +92,10 @@ export function supportedBranchCondition(source: string): boolean {
   const runs = file.statements.filter((s): s is ts.FunctionDeclaration =>
     ts.isFunctionDeclaration(s) && s.name?.text === "runWorkflow");
   if (declarations.length !== 1 || runs.length !== 1) return false;
+  // An identically named generic type parameter shadows the local interface:
+  // runWorkflow<WorkflowInput>(input: WorkflowInput, ...) cannot be assumed to
+  // have the required boolean member, even if an interface exists in this file.
+  if (runs[0]!.typeParameters?.some(param => param.name.text === "WorkflowInput")) return false;
   const paramType = runs[0]!.parameters[0]?.type;
   if (!paramType || !ts.isTypeReferenceNode(paramType) ||
       !ts.isIdentifier(paramType.typeName) || paramType.typeName.text !== "WorkflowInput" ||
@@ -206,7 +210,13 @@ export function canvasOrder(source: string): SourceEdge[] {
       const steps = item[arm];
       if (steps.length) edge(item.id, steps[0]!.id, arm);
       for (let j = 1; j < steps.length; j++) edge(steps[j - 1]!.id, steps[j]!.id, "sequence");
-      if (after) edge(steps.at(-1)?.id ?? item.id, after.id, "join");
+      if (after) {
+        // An empty arm skips directly from its own TRUE/FALSE output to the
+        // continuation; a non-empty arm joins from its final statement.
+        // Both empty arms remain distinct even when they share a destination.
+        if (steps.length) edge(steps[steps.length - 1]!.id, after.id, "join");
+        else edge(item.id, after.id, arm);
+      }
     }
   }
   return edges;
