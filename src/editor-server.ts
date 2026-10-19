@@ -119,28 +119,32 @@ export async function startEditor(folder: string, port = 4175) {
         }
         const action = await body(request);
         if (action.revision !== revision) { json(response, 409, { error: "stale editor revision; reload" }); return; }
+        let pending = workflow;
         switch (action.type) {
           case "move":
             if (typeof action.id !== "string") throw new Error("missing node id");
-            workflow = await moveProjectedNode(workflow, action.id, action.x as number, action.y as number);
+            pending = await moveProjectedNode(workflow, action.id, action.x as number, action.y as number);
             break;
           case "property":
             if (typeof action.id !== "string") throw new Error("missing node id");
-            workflow = await editKnownName(workflow, action.id, action.value as string);
+            pending = await editKnownName(workflow, action.id, action.value as string);
             break;
           case "code":
-            workflow = await editCode(workflow, action.source as string);
+            pending = await editCode(workflow, action.source as string);
             break;
           case "save":
             await persist(directory, saved, exportWorkflow(workflow));
             saved = exportWorkflow(workflow);
             break;
           case "reload":
-            workflow = await loadWorkflow(await readPackage(directory));
-            saved = exportWorkflow(workflow);
+            pending = await loadWorkflow(await readPackage(directory));
             break;
           default: throw new Error("unknown editor action");
         }
+        // Reject stale AST identities before changing in-memory state.
+        await projectWorkflow(pending);
+        workflow = pending;
+        if (action.type === "reload") saved = exportWorkflow(workflow);
         revision++;
         json(response, 200, {
           revision, dirty: JSON.stringify(exportWorkflow(workflow)) !== JSON.stringify(saved),
