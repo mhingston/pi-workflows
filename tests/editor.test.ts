@@ -7,6 +7,7 @@ import { request as httpRequest } from "node:http";
 import { exportWorkflow, loadWorkflow, sha256, type WorkflowFiles } from "../src/artifact.ts";
 import { editCode, editKnownName, moveProjectedNode, projectWorkflow } from "../src/editor.ts";
 import { startEditor } from "../src/editor-server.ts";
+import { editCanvas, readCanvas } from "../src/canvas.ts";
 
 const source = await readFile(new URL("../fixtures/complex/workflow.ts", import.meta.url), "utf8");
 const rawManifest = await readFile(new URL("../fixtures/complex/workflow.json", import.meta.url), "utf8");
@@ -238,6 +239,109 @@ test("concurrent stale edits and save requests serialize and return HTTP 409", a
       const running = server;
       await new Promise<void>((done, reject) => running.close(error => error ? reject(error) : done()));
     }
+    await rm(folder, { recursive: true, force: true });
+  }
+});
+
+test("managed canvas steps create executable TypeScript in a bounded region and preserve unrelated source", async () => {
+  const original = await loadWorkflow(await files());
+  const starting = await projectWorkflow(original);
+  assert.equal(starting.canvasEnabled, true);
+  assert.deepEqual(starting.sequenceEdges, []);
+  const hook = await editCanvas(original, { type: "add-step", kind: "hook", name: "audit", x: 420, y: 200 });
+  const firstId = readCanvas(hook.source)!.steps[0]!.id;
+  assert.match(hook.source, /await ports.hook\("audit", input\);/);
+  assert.equal(hook.source.replace(hook.source.slice(readCanvas(hook.source)!.start, readCanvas(hook.source)!.end), ""),
+    original.source);
+  assert.equal(hook.manifest.sourceSha256, await sha256(hook.source));
+  assert.equal((await projectWorkflow(hook)).nodes.find(n => n.id === firstId)?.x, 420);
+  const agent = await editCanvas(hook, { type: "add-step", kind: "agent", name: "scorer", x: 680, y: 200 });
+  const secondId = readCanvas(agent.source)!.steps[1]!.id;
+  const approval = await editCanvas(agent, { type: "add-step", kind: "approval", name: "Proceed?", x: 940, y: 200 });
+  const thirdId = readCanvas(approval.source)!.steps[2]!.id;
+  assert.equal((await projectWorkflow(approval)).sequenceEdges.length, 2);
+  assert.match(approval.source, /if \(!await ports.approve\("Proceed\?"\)\) throw new Error\("approval denied"\);/);
+  const reordered = await editCanvas(approval, { type: "connect-step", from: firstId, to: thirdId });
+  assert.deepEqual(readCanvas(reordered.source)!.steps.map(s => s.id), [firstId, thirdId, secondId]);
+  assert.equal((await editCanvas(reordered, { type: "connect-step", from: firstId, to: thirdId })).source, reordered.source);
+  const renamed = await editCanvas(reordered, { type: "rename-step", id: firstId, name: "after-change" });
+  assert.equal(readCanvas(renamed.source)!.steps[0]!.name, "after-change");
+  const moved = await moveProjectedNode(renamed, firstId, 520, 280);
+  assert.equal((await projectWorkflow(moved)).nodes.find(n => n.id === firstId)?.y, 280);
+  let final = moved;
+  for (const id of [thirdId, secondId, firstId]) final = await editCanvas(final, { type: "remove-step", id });
+  assert.equal(final.source, original.source, "removing all managed steps restores exact source bytes");
+  assert.equal(final.manifest.sourceSha256, original.manifest.sourceSha256);
+  assert.deepEqual(readCanvas(final.source)!.steps, []);
+});
+
+test("canvas rejects unmarked, unknown, overlapping and noncanonical edits", async () => {
+  const input = await files();
+  const original = await loadWorkflow(input);
+  const noCanvas = input.source.replace("  // @pi-workflows:canvas-start\n  // @pi-workflows:canvas-end\n", "");
+  const noCanvasWorkflow = await loadWorkflow({
+    ...input, source: noCanvas, manifestJson: JSON.stringify({ ...original.manifest, sourceSha256: await sha256(noCanvas) }),
+  });
+  await assert.rejects(editCanvas(noCanvasWorkflow, { type: "add-step", kind: "hook", name: "x", x: 0, y: 0 }), /no editable region/);
+  await assert.rejects(editCanvas(original, { type: "remove-step", id: "missing" }), /unknown managed/);
+  await assert.rejects(editCanvas(original, { type: "add-step", kind: "hook", name: "bad", x: Infinity, y: 0 }), /coordinates/);
+  const withStep = await editCanvas(original, { type: "add-step", kind: "hook", name: "valid", x: 0, y: 0 });
+  const changed = withStep.source.replace('await ports.hook("valid", input);', 'await ports.hook(getName(), input);');
+  const untrusted = await loadWorkflow({
+    ...withStep.files, source: changed,
+    manifestJson: JSON.stringify({ ...withStep.manifest, sourceSha256: await sha256(changed) }),
+    layoutJson: undefined,
+  });
+  await assert.rejects(editCanvas(untrusted, { type: "add-step", kind: "hook", name: "no", x: 0, y: 0 }), /unsupported statement/);
+  const withAnchor = await moveProjectedNode(original, "ast_hook_1", 230, 150);
+  const add = await editCanvas(withAnchor, { type: "add-step", kind: "hook", name: "extra", x: 300, y: 80 });
+  assert.equal((await projectWorkflow(add)).nodes.find(n => n.id === "ast_hook_1")?.x, 230);
+  await assert.rejects(editCanvas(add, { type: "connect-step", from: "ast_hook_1", to: readCanvas(add.source)!.steps[0]!.id }), /different managed/);
+});
+
+test("local server can add, connect, remove and save executable canvas nodes", async () => {
+  const folder = await mkdtemp(join(tmpdir(), "pi-workflow-canvas-"));
+  let server: Awaited<ReturnType<typeof startEditor>> | undefined;
+  try {
+    const initial = await files();
+    await writeFile(join(folder, "workflow.ts"), initial.source);
+    await writeFile(join(folder, "workflow.json"), initial.manifestJson);
+    server = await startEditor(folder, 0);
+    const address = server.address();
+    assert.ok(address && typeof address !== "string");
+    const base = "http://127.0.0.1:" + address.port;
+    const post = (revision: number, type: string, fields: Record<string, unknown>) => fetch(base + "/api/action", {
+      method: "POST", headers: { "content-type": "application/json", "x-workflow-editor": "1" },
+      body: JSON.stringify({ type, revision, ...fields }),
+    });
+    let a = await post(0, "add-step", { kind: "hook", name: "one", x: 100, y: 100 });
+    assert.equal(a.status, 200, await a.clone().text());
+    let snapshot = await a.json() as { revision: number; graph: { nodes: Array<{ id: string; canvasKind?: string }>; sequenceEdges: unknown[] } };
+    const one = snapshot.graph.nodes.find(n => n.canvasKind === "hook")!.id;
+    a = await post(snapshot.revision, "add-step", { kind: "hook", name: "two", x: 400, y: 100 });
+    assert.equal(a.status, 200, await a.clone().text());
+    snapshot = await a.json();
+    const two = snapshot.graph.nodes.find(n => n.canvasKind === "hook" && n.id !== one)!.id;
+    assert.equal(snapshot.graph.sequenceEdges.length, 1);
+    const stale = await post(0, "remove-step", { id: two });
+    assert.equal(stale.status, 409);
+    a = await post(snapshot.revision, "connect-step", { from: two, to: one });
+    assert.equal(a.status, 200, await a.clone().text());
+    snapshot = await a.json();
+    a = await post(snapshot.revision, "remove-step", { id: one });
+    assert.equal(a.status, 200, await a.clone().text());
+    snapshot = await a.json();
+    a = await post(snapshot.revision, "save", {});
+    assert.equal(a.status, 200, await a.clone().text());
+    const sourceAfter = await readFile(join(folder, "workflow.ts"), "utf8");
+    assert.match(sourceAfter, /await ports.hook\("two", input\);/);
+    assert.doesNotMatch(sourceAfter, /await ports.hook\("one", input\);/);
+    assert.equal((await loadWorkflow(await (async () => ({
+      source: sourceAfter, manifestJson: await readFile(join(folder, "workflow.json"), "utf8"),
+      layoutJson: await readFile(join(folder, "layout.json"), "utf8"),
+    }))())).source, sourceAfter);
+  } finally {
+    if (server) await new Promise<void>((done, reject) => server!.close(e => e ? reject(e) : done()));
     await rm(folder, { recursive: true, force: true });
   }
 });
