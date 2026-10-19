@@ -168,7 +168,8 @@ export interface SourceEdge { id: string; from: string; to: string; kind: "seque
 export function canvasOrder(source: string): SourceEdge[] {
   const items = readCanvas(source)?.items ?? [], edges: SourceEdge[] = [];
   const edge = (from: string, to: string, kind: SourceEdge["kind"]) =>
-    edges.push({ id: "source_" + kind + "_" + from + "_" + to, from, to, kind });
+    { if (!edges.some(e => e.from === from && e.to === to && e.kind === kind))
+        edges.push({ id: "source_" + kind + "_" + from + "_" + to, from, to, kind }); };
   for (let i = 1; i < items.length; i++) {
     const prev = items[i - 1]!, next = items[i]!;
     if (prev.type !== "branch") edge(prev.id, next.id, "sequence");
@@ -199,8 +200,12 @@ export async function editCanvas(workflow: LoadedWorkflow, operation: CanvasOper
   const oldIds = new Set([...region.steps.map(s => s.id), ...(region.branch ? [region.branch.id] : [])]);
   let added: { id: string; x: number; y: number } | undefined;
   function locate(id: string): { step: CanvasStep; list: CanvasStep[]; index: number } | null {
-    for (const list of [items as CanvasStep[], ...(branch ? [branch.then, branch.else] : [])]) {
-      const index = list.findIndex(item => item.type !== "branch" && item.id === id);
+    const topIndex = items.findIndex(item => item.type !== "branch" && item.id === id);
+    if (topIndex >= 0) {
+      return { step: items[topIndex]! as CanvasStep, list: items as CanvasStep[], index: topIndex };
+    }
+    for (const list of branch ? [branch.then, branch.else] : []) {
+      const index = list.findIndex(item => item.id === id);
       if (index >= 0) return { step: list[index]!, list, index };
     }
     return null;
