@@ -118,3 +118,63 @@ test("builder reads the owner's native snapshot without any telemetry provider",
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+
+test("failed approval and aborted runs retain native child hierarchy after terminal settlement and reopen", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "pi-workflow-non-success-correlation-"));
+  const db = join(dir, "runs.sqlite");
+  const { Run, registry, input } = await trustedFixture({ approve: async () => false });
+  const open = async () => Harness.open(await openNodeSqliteStorage(db),
+    { models: createModels(), registry }, ctx);
+  let harness = await open();
+  try {
+    const root = await harness.root(ctx);
+    const deniedId = await root.commit(tx =>
+      tx.createTask(Run, input([2, 3], true), { ownership: { kind: "conversation" } }), ctx);
+    const denied = await harness.waitForTask(deniedId, ctx);
+    assert.equal(denied.state.outcome.status, "failed", "approval denial is a native failed task");
+    const failedGraph = await captureRunGraph(harness, Number(deniedId));
+    assert.ok(failedGraph);
+    assert.equal(failedGraph.hierarchyComplete, true);
+    assert.equal(failedGraph.nodes[0]?.outcome, "failed");
+    assert.equal(failedGraph.nodes.length, 3);
+    assert.equal(failedGraph.edges.length, 2);
+    assert.deepEqual(failedGraph.edges.map(edge => edge.from), [Number(deniedId), Number(deniedId)]);
+    assert.ok(failedGraph.nodes.slice(1).every(node => node.status === "terminal"));
+
+    const abortedId = await root.commit(tx =>
+      tx.createTask(Run, input([5, 6], false), { ownership: { kind: "conversation" } }), ctx);
+    harness.resume();
+    let waiting = false;
+    for (let attempt = 0; attempt < 200; attempt++) {
+      const record = await harness.getTask(abortedId, ctx);
+      if (record?.state.status === "waiting") { waiting = true; break; }
+      await new Promise(resolve => setTimeout(resolve, 5));
+    }
+    assert.ok(waiting, "abort only after native children are atomically committed");
+    const beforeAbort = await captureRunGraph(harness, Number(abortedId));
+    assert.ok(beforeAbort);
+    assert.equal(beforeAbort.edges.length, 2);
+    await harness.abortTask(abortedId, ctx);
+    const aborted = await harness.waitForTask(abortedId, ctx);
+    assert.equal(aborted.state.outcome.status, "aborted");
+    const abortedGraph = await captureRunGraph(harness, Number(abortedId));
+    assert.ok(abortedGraph);
+    assert.equal(abortedGraph.nodes[0]?.outcome, "aborted");
+    assert.equal(abortedGraph.hierarchyComplete, true);
+    assert.deepEqual(abortedGraph.edges, beforeAbort.edges,
+      "aborting must not erase child identity after the live graph drops them");
+
+    await harness.close(ctx);
+    harness = await open();
+    for (const [id, edges] of [[deniedId, failedGraph.edges], [abortedId, beforeAbort.edges]] as const) {
+      const observed = await captureRunGraph(harness, Number(id));
+      assert.ok(observed);
+      assert.equal(observed.hierarchyComplete, true);
+      assert.deepEqual(observed.edges, edges, "native receipts must survive harness reopen");
+    }
+  } finally {
+    await harness.close(ctx).catch(() => {});
+    await rm(dir, { recursive: true, force: true });
+  }
+});
