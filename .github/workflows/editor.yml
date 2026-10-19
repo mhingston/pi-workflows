@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "src/editor.ts"
+      - "src/canvas.ts"
       - "src/editor-server.ts"
       - "ui/**"
       - "fixtures/**"
