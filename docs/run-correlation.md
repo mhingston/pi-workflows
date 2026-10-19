@@ -32,9 +32,11 @@ as `runId` from both Pi entry points and persists on the native Run task.
 for published runs, `publication.revisionId` (plus provider/dependency/config
 provenance). The native record supplies `conversationId`, `kind`, `owner`,
 task status and outcome. The parent checkpoint includes child task IDs during
-a join; after completion, the terminal `steps[]` receipts retain child IDs.
-The latter is **fixture-specific**, not a general guarantee for every task
-family. Parent/child links are always native task ownership edges, never guessed
+a join; after successful completion, terminal `steps[]` receipts retain child
+IDs. Native failed/aborted outcomes now retain a small `unsuccessful` result
+with just direct `childTaskIds[]`. That does **not** change the native
+failed/aborted status, and it is **fixture-specific**, not a general guarantee
+for every task family. Parent/child links are always native task ownership edges, never guessed
 from the TypeScript AST or from step names.
 
 `captureRunGraph(harness, runId)` in
@@ -47,6 +49,8 @@ The resulting read-only `ExecutionGraph` has:
 - `nodes[]`: native `taskId`, optional `parentTaskId`, `conversationId`,
   task kind, committed status, optional phase/outcome and abort flag.
 - `edges[]` of native `from` parent task ID and `to` child task ID.
+- `hierarchyComplete` flags legacy or runtime-faulted terminal outcomes without
+  durable child references; the inspector must not imply they have no children.
 
 No separate correlation/trace ID, per-step identity, attempt ID, token metric,
 timestamp or model/hook event is invented. Input/output payloads, checkpoint
@@ -91,10 +95,11 @@ conversations exist*, and correlate optional tool task IDs.
 
 ## Known gaps and safety boundary
 
-1. Completed parent/child IDs remain accessible through native persisted task
-   records and fixture receipts, but arbitrary deep *terminal* descendants
-   without persisted child references are not reconstructable from the live
-   graph. No claim of a complete history is made.
+1. Completed, failed and explicitly aborted fixture runs preserve their direct
+   child IDs in native terminal receipts. Legacy records and runtime faults can
+   lack them and are marked `hierarchyComplete: false`. Arbitrary deep
+   *terminal* descendants without persisted child references cannot be inferred
+   from the live graph. No claim of a complete history is made.
 2. A regular Pi session ID is not stored on the durable run; tracing across the
    two runtimes needs an explicit opt-in bridge when the external extension is
    implemented. Do not equate different conversation namespaces.
@@ -112,7 +117,7 @@ conversations exist*, and correlate optional tool task IDs.
 
 `npm run test:correlation` covers a real native waiting parent and three
 dynamically created child tasks, close/reopen with unchanged task ownership IDs,
-terminal receipts after native live-graph removal, invalid run IDs, and the
-editor's connected vs unconnected read-only endpoint. The gate CI runs this
+terminal receipts after native live-graph removal, failed/aborted-run child
+identities, invalid run IDs, and the editor's connected vs unconnected read-only endpoint. The gate CI runs this
 alongside the existing hard-kill effect/recovery tests. No model provider keys
 or telemetry plugin are needed.
