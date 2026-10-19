@@ -1,9 +1,24 @@
+import { displaySource, sourceFromTextarea } from "./source-text.js";
 const $ = (id) => document.getElementById(id);
 let state = null;
 let selected = null;
 let positions = new Map();
 let dragging = null;
 let codeDraft = false;
+let pendingAction = false;
+const downloadUrls = new Set();
+
+function closeDownloads() {
+  const old = $("downloads");
+  if (!old) return false;
+  old.remove();
+  for (const url of downloadUrls) {
+    // Let any in-flight browser download consume its object URL first.
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+  downloadUrls.clear();
+  return true;
+}
 
 function message(text, error = false) {
   $("status").textContent = text;
@@ -11,10 +26,16 @@ function message(text, error = false) {
 }
 async function api(type, fields = {}) {
   if (!state) return;
+  if (pendingAction) {
+    message("An editor action is already in progress.", true);
+    return;
+  }
   if (codeDraft && type !== "code" && type !== "reload") {
     message("Apply or discard your code-pane draft before changing graph properties or layout.", true);
     return;
   }
+  const submittedDraft = $("code").value;
+  pendingAction = true;
   try {
     const response = await fetch("/api/action", {
       method: "POST",
@@ -24,12 +45,18 @@ async function api(type, fields = {}) {
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || "Request failed");
     state = result;
-    codeDraft = false;
+    // Only acknowledge the exact draft submitted. Text typed during the
+    // request must survive the incoming state/render.
+    if ((type === "code" || type === "reload") && $("code").value === submittedDraft) {
+      codeDraft = false;
+    }
     render();
     message(type === "save" ? "Package saved to disk." :
       type === "reload" ? "Package reloaded." : "Applied " + type + " change in memory. Save to disk when ready.");
   } catch (error) {
     message(error.message, true);
+  } finally {
+    pendingAction = false;
   }
 }
 async function load() {
@@ -56,7 +83,9 @@ function render() {
   $("dirty").textContent = state.dirty ? "Unsaved changes" : "Unmodified";
   $("dirty").classList.toggle("dirty", state.dirty);
   $("notice").textContent = state.graph.notice;
-  $("code").value = state.files.source;
+  closeDownloads(); // Existing Blob URLs refer to an older artifact snapshot.
+  if ($("code").value === displaySource(state.files.source)) codeDraft = false;
+  if (!codeDraft) $("code").value = displaySource(state.files.source);
   positions = new Map(state.graph.nodes.map(n => [n.id, { x: n.x, y: n.y }]));
   renderNodes();
   inspect();
@@ -108,6 +137,10 @@ function renderNodes() {
     });
     el.addEventListener("pointerdown", event => {
       if (event.button !== 0) return;
+      if (pendingAction) {
+        message("Finish the current edit before dragging nodes.", true);
+        return;
+      }
       if (codeDraft) {
         message("Apply your code-pane draft before dragging nodes.", true);
         return;
@@ -173,8 +206,7 @@ function inspect() {
 }
 function downloads() {
   if (codeDraft) { message("Apply your code-pane draft before exporting.", true); return; }
-  const old = $("downloads");
-  if (old) { old.remove(); return; }
+  if (closeDownloads()) return;
   const panel = document.createElement("div");
   panel.id = "downloads";
   const files = [
@@ -184,6 +216,7 @@ function downloads() {
   ];
   for (const [name, value] of files) {
     const url = URL.createObjectURL(new Blob([value], { type: "text/plain;charset=utf-8" }));
+    downloadUrls.add(url);
     const link = text("a", "Download " + name);
     link.href = url;
     link.download = name;
@@ -195,8 +228,13 @@ function downloads() {
   }
   $("download").after(panel);
 }
-$("code").addEventListener("input", () => { codeDraft = $("code").value !== state?.files.source; });
-$("apply-code").addEventListener("click", () => api("code", { source: $("code").value }));
+$("code").addEventListener("input", () => {
+  codeDraft = $("code").value !== displaySource(state?.files.source ?? "");
+});
+$("apply-code").addEventListener("click", () => {
+  if (!codeDraft) { message("No source changes to apply."); return; }
+  api("code", { source: sourceFromTextarea(state.files.source, $("code").value) });
+});
 $("reload").addEventListener("click", () => {
   if (!state?.dirty && !codeDraft || confirm("Discard unsaved edits and reload files from disk?")) api("reload");
 });
