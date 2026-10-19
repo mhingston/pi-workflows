@@ -113,6 +113,7 @@ export async function projectWorkflow(workflow: LoadedWorkflow): Promise<EditorG
     positions.delete(item.id);
   }
   for (const other of positions.values()) {
+    if (other.id.startsWith("ast_")) fail("layout contains orphaned AST node " + other.id + "; reconcile layout explicitly");
     nodes.push({ ...other, category: other.kind === "dynamic" ? "dynamic" : "opaque" });
   }
   if (!nodes.some(n => n.kind === "opaque")) {
