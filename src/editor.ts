@@ -3,20 +3,24 @@
  * Graph nodes are authoring hints. Neither this module nor the UI evaluates TS.
  */
 import ts from "typescript";
+import { canvasOrder, readCanvas, type CanvasKind } from "./canvas.ts";
 import {
   ArtifactError, loadWorkflow, sha256, type LoadedWorkflow, type ProjectionNode,
   type SourceAnchor, type WorkflowLayout,
 } from "./artifact.ts";
 
-export type EditorCategory = "branch" | "parallel" | "dynamic" | "call" | "opaque";
+export type EditorCategory = "branch" | "parallel" | "dynamic" | "call" | "opaque" | "canvas";
 export interface EditorNode extends ProjectionNode {
   readonly category: EditorCategory;
   readonly editable?: { readonly field: "name"; readonly value: string };
+  readonly canvasKind?: CanvasKind;
 }
 export interface EditorGraph {
   readonly nodes: readonly EditorNode[];
   readonly edges: WorkflowLayout["edges"];
   readonly notice: string;
+  readonly sequenceEdges: ReturnType<typeof canvasOrder>;
+  readonly canvasEnabled: boolean;
 }
 interface Candidate {
   id: string;
@@ -27,7 +31,7 @@ interface Candidate {
   end: number;
   argument?: { start: number; end: number; value: string };
 }
-const NOTICE = "Dashed edges are illustrative layout hints, never execution dependencies. Dynamic and opaque code remains in workflow.ts.";
+const NOTICE = "Solid arrows denote the exact sequential order in an explicitly managed canvas region. Dashed edges are illustrative layout hints only. Other TypeScript remains authoritative.";
 
 function fail(message: string): never { throw new ArtifactError("editor: " + message); }
 
@@ -46,6 +50,7 @@ function parse(source: string): ts.SourceFile {
 /** An intentionally small, statically recognisable subset; no inferred runtime task edges. */
 function candidates(source: string): Candidate[] {
   const file = parse(source);
+  const managed = readCanvas(source);
   const found: Candidate[] = [];
   const counts = new Map<string, number>();
   function add(node: ts.Node, category: EditorCategory, kind: ProjectionNode["kind"],
@@ -58,6 +63,7 @@ function candidates(source: string): Candidate[] {
     });
   }
   function visit(node: ts.Node): void {
+    if (managed && node.getStart(file) >= managed.start && node.end <= managed.end) return;
     if (ts.isIfStatement(node)) add(node, "branch", "known", "Branch (if)", "branch");
     if (ts.isForStatement(node) || ts.isForOfStatement(node) ||
         ts.isForInStatement(node) || ts.isWhileStatement(node) ||
@@ -92,6 +98,7 @@ async function anchor(source: string, start: number, end: number): Promise<Sourc
 
 /** Import validated files only; preserve pre-existing layout nodes, including unknown anchors. */
 export async function projectWorkflow(workflow: LoadedWorkflow): Promise<EditorGraph> {
+  const canvas = readCanvas(workflow.source);
   const parsed = candidates(workflow.source);
   const positions = new Map(workflow.layout?.nodes.map(node => [node.id, node]) ?? []);
   const nodes: EditorNode[] = [];
@@ -112,6 +119,22 @@ export async function projectWorkflow(workflow: LoadedWorkflow): Promise<EditorG
     });
     positions.delete(item.id);
   }
+  for (const [index, step] of (canvas?.steps ?? []).entries()) {
+    const previous = positions.get(step.id);
+    const actual = await anchor(workflow.source, step.start, step.end);
+    if (previous && (previous.kind !== "known" ||
+        !previous.anchor || previous.anchor.start !== actual.start ||
+        previous.anchor.end !== actual.end || previous.anchor.sha256 !== actual.sha256)) {
+      fail("managed step " + step.id + " layout anchor is stale; reconcile source");
+    }
+    nodes.push({
+      id: step.id, category: "canvas", kind: "known",
+      canvasKind: step.type, label: "ports." + step.type + " (" + step.name + ")",
+      x: previous?.x ?? 70 + index * 280, y: previous?.y ?? 80,
+      anchor: actual, editable: { field: "name", value: step.name },
+    });
+    positions.delete(step.id);
+  }
   for (const other of positions.values()) {
     if (other.id.startsWith("ast_")) fail("layout contains orphaned AST node " + other.id + "; reconcile layout explicitly");
     nodes.push({ ...other, category: other.kind === "dynamic" ? "dynamic" : "opaque" });
@@ -122,7 +145,8 @@ export async function projectWorkflow(workflow: LoadedWorkflow): Promise<EditorG
       label: "Other TypeScript — use code pane", x: 60, y: 60 + Math.ceil(nodes.length / 3) * 150,
     });
   }
-  return { nodes, edges: workflow.layout?.edges ?? [], notice: NOTICE };
+  return { nodes, edges: workflow.layout?.edges ?? [], sequenceEdges: canvasOrder(workflow.source),
+    canvasEnabled: Boolean(canvas), notice: NOTICE };
 }
 
 /** Dragging may create layout.json, but never changes or reconstructs source. */
