@@ -196,6 +196,20 @@ export async function startEditor(folder: string, port = 4175, options: EditorOp
               pending = await editCanvas(workflow, { type: "connect-step",
                 from: action.from as string, to: action.to as string });
               break;
+            case "add-branch":
+              pending = await editCanvas(workflow, { type: "add-branch",
+                x: action.x as number, y: action.y as number });
+              break;
+            case "remove-branch":
+              pending = await editCanvas(workflow, { type: "remove-branch", id: action.id as string });
+              break;
+            case "connect-branch":
+              pending = await editCanvas(workflow, { type: "connect-branch",
+                from: action.from as string, to: action.to as string, arm: action.arm as "then" | "else" });
+              break;
+            case "disconnect-branch":
+              pending = await editCanvas(workflow, { type: "disconnect-branch", id: action.id as string });
+              break;
             case "code":
               pending = await editCode(workflow, action.source as string);
               break;
