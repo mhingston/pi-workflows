@@ -1,0 +1,6 @@
+{
+  "name": "pi-workflows-code-executor-smoke",
+  "main": "./smoke-worker.mjs",
+  "compatibility_date": "2026-10-12",
+  "worker_loaders": [{ "binding": "LOADER" }]
+}
