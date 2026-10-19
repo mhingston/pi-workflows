@@ -10,7 +10,7 @@ import { Harness, type TaskId } from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { trustedFixture } from "./support/trusted-fixture.ts";
 import { idempotentFileProvider, receiptPath } from "./support/idempotent-effect.ts";
-import type { ApprovalRequest, WorkflowOutcome } from "../src/durable/fixture-runtime.ts";
+import type { ApprovalRequest, ProviderApprovalResult, WorkflowOutcome } from "../src/durable/fixture-runtime.ts";
 
 const ctx = BACKGROUND_CONTEXT;
 
@@ -27,11 +27,12 @@ async function attempts(providerDir: string): Promise<Attempt[]> {
 
 async function killBetweenProviderAndCheckpoint(
   db: string, runIdFile: string, providerDir: string, childRunsFile: string,
+  boundary: "before-receipt" | "after-receipt" = "before-receipt",
 ): Promise<void> {
   const child = spawn(process.execPath, [
     "--experimental-strip-types",
     new URL("./durable-idempotency-worker.ts", import.meta.url).pathname,
-    db, runIdFile, providerDir, childRunsFile,
+    db, runIdFile, providerDir, childRunsFile, boundary,
   ], { stdio: ["ignore", "pipe", "pipe"] });
   let stderr = "";
   child.stderr.on("data", chunk => { stderr += String(chunk); });
@@ -158,3 +159,91 @@ for (const scenario of ["matching", "conflict", "unknown"] as const) {
       } finally { await harness.close(ctx).catch(() => {}); }
     }));
 }
+
+/** These must exercise the native approval path, not only the mock provider. */
+for (const scenario of [
+  { name: "applied with wrong key", status: "applied", tamper: "key" },
+  { name: "already_applied with wrong reason", status: "already_applied", tamper: "reason" },
+  { name: "applied with wrong input hash", status: "applied", tamper: "hash" },
+  { name: "already_applied with non-boolean decision", status: "already_applied", tamper: "decision" },
+  { name: "applied with in-place provider mutation", status: "applied", tamper: "mutation" },
+] as const) {
+  test(`native runtime fails closed for ${scenario.name}`, async () => inTemp(async dir => {
+    let calls = 0;
+    const { Run, registry, input } = await trustedFixture({
+      applyIdempotently: async (key, request): Promise<ProviderApprovalResult> => {
+        calls++;
+        if (scenario.tamper === "mutation") {
+          request.reason = "provider mutated reason";
+        }
+        return {
+          status: scenario.status,
+          idempotencyKey: scenario.tamper === "key" ? key + ":another-operation" : key,
+          request: {
+            reason: scenario.tamper === "reason" ? "not the requested approval" : request.reason,
+            inputSha256: scenario.tamper === "hash" ? "0".repeat(64) : request.inputSha256,
+          },
+          approved: scenario.tamper === "decision" ? ("true" as unknown as boolean) : true,
+        };
+      },
+    });
+    const harness = await Harness.open(await openNodeSqliteStorage(join(dir, "native.sqlite")),
+      { models: createModels(), registry }, ctx);
+    try {
+      const root = await harness.root(ctx);
+      const id = await root.commit(
+        tx => tx.createTask(Run, input([2, 3], true), { ownership: { kind: "conversation" } }), ctx);
+      const task = await harness.waitForTask(id, ctx);
+      assert.equal(task.state.outcome.status, "completed");
+      if (task.state.outcome.status === "completed") {
+        assert.equal(task.state.outcome.result.status, "needs_reconciliation",
+          "invalid positive-status receipt must not become a completed workflow");
+      }
+      assert.equal(calls, 1, "an unverified receipt must not trigger another provider call");
+    } finally { await harness.close(ctx).catch(() => {}); }
+  }));
+}
+
+test("SIGKILL after native approval memo restores applied disposition without contacting provider", async () =>
+  inTemp(async dir => {
+    const db = join(dir, "session.sqlite");
+    const runIdFile = join(dir, "run-id.txt");
+    const providerDir = join(dir, "external-provider");
+    const childRunsFile = join(dir, "child-runs.log");
+    await killBetweenProviderAndCheckpoint(
+      db, runIdFile, providerDir, childRunsFile, "after-receipt",
+    );
+    const id = Number(await readFile(runIdFile, "utf8")) as TaskId<WorkflowOutcome>;
+    const before = await attempts(providerDir);
+    assert.equal(before.length, 1, "one provider application before saved receipt");
+    const childrenBefore = (await readFile(childRunsFile, "utf8")).trim().split("\n").map(Number);
+    assert.equal(childrenBefore.length, 2);
+
+    let replayCalls = 0;
+    const { registry } = await trustedFixture({
+      applyIdempotently: async () => {
+        replayCalls++;
+        throw new Error("saved approval memo must bypass the provider entirely");
+      },
+    }, {
+      childExecuted: async childId => { throw new Error("checkpointed child reran: " + childId); },
+    });
+    const harness = await Harness.open(await openNodeSqliteStorage(db),
+      { models: createModels(), registry }, ctx);
+    try {
+      const task = await harness.waitForTask(id, ctx);
+      assert.equal(task.state.outcome.status, "completed");
+      if (task.state.outcome.status === "completed") {
+        const result = task.state.outcome.result;
+        assert.equal(result.status, "completed");
+        if (result.status === "completed") {
+          assert.equal(result.output, 10);
+          assert.equal(result.approvalDisposition, "applied", "saved provider status must survive replay");
+          assert.deepEqual(result.steps.map(step => step.taskId), childrenBefore);
+        }
+      }
+      assert.equal(replayCalls, 0, "no external provider request follows a saved native receipt");
+      assert.deepEqual(await attempts(providerDir), before);
+      assert.deepEqual((await readFile(childRunsFile, "utf8")).trim().split("\n").map(Number), childrenBefore);
+    } finally { await harness.close(ctx).catch(() => {}); }
+  }));
