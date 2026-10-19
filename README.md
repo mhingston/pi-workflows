@@ -24,6 +24,8 @@ See [architecture handoff](docs/HANDOFF.md), [artifact contract](docs/artifact-f
 
 **Integration gate (issue #6):** one version-pinned source package is projected and no-op saved in the editor, invoked via both Pi entry points, then verified against native Pi Durable records and restart/ambiguous-effect tests. See [reproducible integration demo, evidence and GO/NO-GO](docs/integration-gate.md).
 
+**Native run correlation (issue #8):** [read-only task hierarchy and integration contract](docs/run-correlation.md). The builder has a separate runtime graph panel that can inspect native task IDs when embedded in a process holding the owning Pi Durable Harness; the standalone editor does not start or attach a competing runtime. Detailed tracing, tool/model/hook telemetry and history belong in a separate extension.
+
 ## Verification
 
 Requires Node >=22.19.
@@ -36,6 +38,7 @@ npm run test:durable
 npm run test:invocation
 npm run test:editor
 npm run test:gate
+npm run test:correlation
 npm run test:providers
 ```
 
