@@ -95,10 +95,11 @@ npm run test:invocation
 `test:invocation` covers the actual SQLite backend for both entry points
 through a registration harness, negative inputs, code-trust, duplicated names,
 capability rejection, permissions and reconciliation. It is **not** a real
-terminal session or actual LLM tool-selection test. For a real Pi smoke,
-start the CLI as above and type both slash commands; run the tool-selection
-example in a configured model session. Record the actual manual result
-separately from automated tests.
+terminal session or actual LLM tool-selection test. On Linux CI,
+`tests/pi-cli-smoke.sh` starts the **actual** Pi CLI in a PTY, types
+`/workflow list` and `/workflow run`, and checks for native run ID and
+completed output without requiring model credentials. To check model selection,
+run the natural-language example in a configured Pi session separately.
 
 Not implemented: arbitrary trusted module registry, permission-scoped external
 effect providers, status/cancel and cross-process coordination, full recovery

@@ -34,3 +34,5 @@ jobs:
         run: npm run test:durable
       - name: Test invocation and extension adapters
         run: npm run test:invocation
+      - name: Smoke real Pi CLI commands (PTY, no model API)
+        run: bash tests/pi-cli-smoke.sh
