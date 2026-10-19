@@ -67,7 +67,8 @@ function copyBinding(binding: PublicationBinding): PublicationBinding {
 }
 
 export class FilePublicationStore implements WorkflowStorage {
-  constructor(readonly directory: string) {}
+  readonly directory: string;
+  constructor(directory: string) { this.directory = directory; }
 
   private filename(id: string): string {
     if (!SHA.test(id)) throw new PublicationError("Invalid publication revision ID");
