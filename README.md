@@ -1,22 +1,34 @@
 # pi-workflows
 
-A planned visual workflow workbench for [Pi](https://pi.dev/) and [Pi Durable](https://github.com/earendil-works/pi/tree/main/packages/durable).
+A code-first workflow workbench for [Pi](https://pi.dev/) using
+[Pi Durable](https://github.com/earendil-works/pi/tree/main/packages/durable)
+for native tasks/checkpoints. The source-preserving artifact format and the
+trusted dynamic fixture are implemented; visual editing is not yet implemented.
 
-**Status:** design/feasibility. No runtime or editor has been implemented.
+**Regular Pi invocation (issue #4):** load `src/pi-extension.ts` through Pi's
+`--extension` flag and use `/workflow list`,
+`/workflow run dynamic_agents --input-json '{"values":[1,2,3],"requiresApproval":false}'`,
+or the `run_workflow` tool. See [invocation and safety documentation](docs/regular-pi-invocation.md).
 
-The goal is to author reusable workflows in code or through an n8n-style visual editor, invoke them from Pi, and execute them through capability-checked runtime providers. Pi Durable is the default intended durable backend. The workflow source remains authoritative: visual editing must never discard or silently change unsupported code.
+The TypeScript workflow source remains authoritative: visual editing must never
+discard or change unsupported code. Regular Pi is a command/tool entry point,
+**not** a crash-resumable runtime. Only the pinned, trusted `dynamic_agents`
+fixture is executable today.
 
-See the architecture handoff in [docs/HANDOFF.md](docs/HANDOFF.md) and [AGENTS.md](AGENTS.md) for contributor guidance once the documentation PR lands.
+See [architecture handoff](docs/HANDOFF.md), [artifact contract](docs/artifact-format.md),
+[native durable execution](docs/durable-runtime.md), and [AGENTS.md](AGENTS.md).
 
-## Initial proof
+## Verification
 
-Prove one workflow can be loaded, visualised, saved without semantic loss, invoked from regular Pi and executed through native Pi Durable tasks. Validate durability and side-effect recovery before expanding the node catalog.
+Requires Node >=22.19.
 
-## Inspirations and references
+```sh
+npm install --ignore-scripts
+npm run typecheck
+npm run test:artifact
+npm run test:durable
+npm run test:invocation
+```
 
-- [Pi extensions](https://pi.dev/docs/latest/extensions)
-- [Pi Durable](https://github.com/earendil-works/pi/blob/main/packages/durable/README.md)
-- [osolmaz/pi-workflows](https://github.com/osolmaz/pi-workflows) — graph DSL and workflow semantics
-- [michaelliv/pi-dynamic-workflows](https://github.com/michaelliv/pi-dynamic-workflows) — dynamic agent orchestration
-
-This project is independent of the similarly named `osolmaz/pi-workflows`.
+This project is independent of the similarly named
+[osolmaz/pi-workflows](https://github.com/osolmaz/pi-workflows).

@@ -1,0 +1,36 @@
+name: Pi regular extension invocation
+
+on:
+  pull_request:
+    paths:
+      - "src/**"
+      - "fixtures/**"
+      - "tests/**"
+      - "package.json"
+      - "tsconfig.json"
+      - ".github/workflows/invocation.yml"
+      - "docs/regular-pi-invocation.md"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  invocation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.21.1"
+      - name: Install pinned dependencies
+        run: npm install --ignore-scripts --no-audit --no-fund
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Test artifact
+        run: npm run test:artifact
+      - name: Test durable runtime
+        run: npm run test:durable
+      - name: Test invocation and extension adapters
+        run: npm run test:invocation
