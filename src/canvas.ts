@@ -33,12 +33,12 @@ export function readCanvas(source: string): CanvasRegion | null {
   if (!starts.length && !ends.length) return null;
   if (starts.length !== 1 || ends.length !== 1) fail("expected exactly one start and end marker");
   const first = starts[0]!, last = ends[0]!;
-  const start = first.index + first[0].length, end = last.index;
+  const start = (first.index ?? -1) + first[0].length, end = last.index ?? -1;
   if (start > end || first[1] !== last[1]) fail("misplaced or mismatched markers");
   const indent = first[1]!, eol = first[0].endsWith("\r\n") ? "\r\n" : "\n";
   const body = source.slice(start, end);
   const pattern = new RegExp("^" + indent + "// @pi-workflows:step (canvas_[a-f0-9]{16})\\r?\\n" +
-    indent + "([^\\r\\n]+)\\r?\\n", "g");
+    indent + "([^\\r\\n]+)\\r?\\n", "gm");
   const steps: CanvasStep[] = [], seen = new Set<string>();
   let cursor = 0;
   while (cursor < body.length) {
