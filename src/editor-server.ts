@@ -104,6 +104,7 @@ export async function startEditor(folder: string, port = 4175) {
   const publicFiles: Record<string, [string, string]> = {
     "/": ["../ui/index.html", "text/html; charset=utf-8"],
     "/app.js": ["../ui/app.js", "text/javascript; charset=utf-8"],
+    "/source-text.js": ["../ui/source-text.js", "text/javascript; charset=utf-8"],
     "/style.css": ["../ui/style.css", "text/css; charset=utf-8"],
   };
   const server = createServer(async (request, response) => {
