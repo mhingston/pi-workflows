@@ -16,18 +16,33 @@ export const FIXTURE_CAPABILITIES = ["agent", "hooks", "approval", "dynamic_task
 
 export type StepReceipt = { taskId: number; input: number; result: number };
 export type WorkflowOutcome =
-  | { status: "completed"; output: number; steps: StepReceipt[]; sourceSha256: string; workflowVersion: string }
+  | { status: "completed"; output: number; steps: StepReceipt[]; sourceSha256: string; workflowVersion: string;
+      /** Provider-confirmed status (absent for the legacy approval port). */
+      approvalDisposition?: "applied" | "already_applied" }
   | { status: "needs_reconciliation"; effectKey: string; steps: StepReceipt[]; sourceSha256: string; workflowVersion: string }
   /** Native failed/aborted outcome receipt: child IDs without inventing step successes. */
   | { status: "unsuccessful"; childTaskIds: number[] };
 
-export interface ApprovalEffect {
-  /**
-   * Effect may happen before receipt persistence. This MUST NOT blindly retry.
-   * The stable key permits an external provider to deduplicate/reconcile.
-   */
-  approve(idempotencyKey: string): Promise<boolean>;
-}
+/** The exact application payload is bound to the immutable native run input. */
+export type ApprovalRequest = { reason: string; inputSha256: string };
+
+export type ProviderApprovalResult =
+  | { status: "applied" | "already_applied"; idempotencyKey: string;
+      request: ApprovalRequest; approved: boolean }
+  | { status: "unknown" | "conflict" };
+
+/**
+ * Only the second port promises provider-side atomic idempotency for an entire
+ * key + request, including authoritative receipt lookup on repeated calls.
+ * The legacy port has NO replay permission even when its key is stable.
+ */
+export type ApprovalEffect =
+  | { approve(idempotencyKey: string): Promise<boolean>; applyIdempotently?: never }
+  | { applyIdempotently(idempotencyKey: string, request: ApprovalRequest): Promise<ProviderApprovalResult>;
+      approve?: never };
+
+/** Test-only child execution probe, not a production hook or tracing API. */
+export type FixtureProbe = { childExecuted?: (taskId: number) => Promise<void> };
 
 export interface PublishedRunProvenance {
   readonly revisionId: string;
@@ -72,6 +87,7 @@ export function registerFixtureWorkflow(
   artifact: LoadedWorkflow,
   effect: ApprovalEffect,
   published?: Omit<PublishedRunProvenance, "inputSha256">,
+  probe?: FixtureProbe,
 ) {
   async function matchingPublication(input: RunInput): Promise<boolean> {
     if (!published) return input.publication === undefined;
@@ -101,6 +117,8 @@ export function registerFixtureWorkflow(
     initial: () => ({ phase: "work", deadline: Date.now() + 150 }),
     phases: {
       work: async (task, runtime, ctx) => {
+        // Test-only proof that terminal children are not re-executed on parent replay.
+        await probe?.childExecuted?.(Number(task.id));
         // Wait deliberately so tests can stop the harness mid-execution.
         await runtime.sleep(task.state.checkpoint.deadline, ctx);
         await runtime.commit(
@@ -172,6 +190,7 @@ export function registerFixtureWorkflow(
         }));
         let cursor = 0;
         const effectKey = [task.input.sourceSha256, String(task.id), "approval"].join(":");
+        let approvalDisposition: "applied" | "already_applied" | undefined;
         try {
           // Run the canonical TypeScript fixture, resolving agent calls with
           // existing durable child receipts rather than spawning ephemeral work.
@@ -185,23 +204,43 @@ export function registerFixtureWorkflow(
             // The sample hooks are pure telemetry/no-op. Arbitrary effectful
             // hooks require a real effect policy in a future adapter.
             hook: async () => {},
-            approve: async () => {
+            approve: async reason => {
               const receipt = await runtime.memo<boolean>("approval-receipt", ctx);
               if (receipt !== undefined) return receipt;
               const intent = await runtime.memo<string>("approval-intent", ctx);
-              if (intent !== undefined) throw new UncertainEffect(effectKey);
-              // Commit the intent before invoking the effect. A crash after this
-              // point but before the receipt leaves an UNCERTAIN result, and we
-              // deliberately DO NOT re-execute the effect on replay.
-              await runtime.memo("approval-intent", effectKey, ctx);
+              if (intent !== undefined && intent !== effectKey) throw new UncertainEffect(effectKey);
+              const idempotent = "applyIdempotently" in effect && !!effect.applyIdempotently;
+              // Only a provider contract guaranteeing atomic deduplication permits
+              // a repeated request after an intent without a local receipt.
+              if (intent !== undefined && !idempotent) throw new UncertainEffect(effectKey);
+              if (intent === undefined) await runtime.memo("approval-intent", effectKey, ctx);
               try {
-                const approved = await effect.approve(effectKey);
+                let approved: boolean;
+                if (idempotent) {
+                  const request: ApprovalRequest = {
+                    reason,
+                    inputSha256: await sha256(JSON.stringify(task.input.input)),
+                  };
+                  const response = await effect.applyIdempotently(effectKey, request);
+                  // Never accept a status without an exact, authoritative receipt
+                  // for the requested operation. Unknown/conflicting/malformed
+                  // provider responses remain ambiguous.
+                  if ((response.status !== "applied" && response.status !== "already_applied") ||
+                      response.idempotencyKey !== effectKey ||
+                      !isDeepStrictEqual(response.request, request) ||
+                      typeof response.approved !== "boolean") {
+                    throw new UncertainEffect(effectKey);
+                  }
+                  approvalDisposition = response.status;
+                  approved = response.approved;
+                } else {
+                  approved = await effect.approve(effectKey);
+                }
                 await runtime.memo("approval-receipt", approved, ctx);
                 return approved;
               } catch {
-                // A rejected call does not prove the remote effect did not
-                // happen. Even receipt persistence can fail after an effect.
-                // Never classify this as a safely failed/retryable action.
+                // A timeout or failed receipt write cannot prove that the
+                // provider did not apply the effect. Never guess success.
                 throw new UncertainEffect(effectKey);
               }
             },
@@ -211,6 +250,7 @@ export function registerFixtureWorkflow(
             status: "terminal", outcome: { status: "completed", result: {
               status: "completed", output, steps,
               workflowVersion: task.input.workflowVersion, sourceSha256: task.input.sourceSha256,
+              ...(approvalDisposition === undefined ? {} : { approvalDisposition }),
             } },
           }), ctx);
         } catch (err) {
