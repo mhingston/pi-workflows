@@ -1,0 +1,43 @@
+name: Cross-runtime integration gate
+
+on:
+  pull_request:
+    paths:
+      - "src/**"
+      - "tests/**"
+      - "fixtures/**"
+      - "ui/**"
+      - "package.json"
+      - "tsconfig.json"
+      - ".github/workflows/gate.yml"
+      - "docs/integration-gate.md"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.21.1"
+      - name: Install pinned dependencies
+        run: npm install --ignore-scripts --no-audit --no-fund
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Artifact contract and editor tests
+        run: |
+          npm run test:artifact
+          npm run test:editor
+      - name: Native durable recovery including SIGKILL effect
+        run: npm run test:durable
+      - name: Both Pi invocation adapters
+        run: npm run test:invocation
+      - name: End-to-end release gate
+        run: npm run test:gate
+      - name: Real Pi command smoke (no LLM credentials)
+        run: bash tests/pi-cli-smoke.sh

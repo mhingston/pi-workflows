@@ -29,6 +29,8 @@ export type RunInput = {
   workflowId: string;
   workflowVersion: string;
   sourceSha256: string;
+  /** UI consent is recorded separately from the external effect receipt. */
+  interactiveApproval: "approved" | "not_required" | "not_recorded";
   input: WorkflowInput;
 };
 
@@ -202,14 +204,18 @@ export function registerFixtureWorkflow(artifact: LoadedWorkflow, effect: Approv
 
   const registry = createRegistry();
   registry.install(defineExtension({ name: "pi-workflows.fixture", tasks: [Child, Run] }));
-  function input(values: number[], requiresApproval: boolean): RunInput {
+  function input(values: number[], requiresApproval: boolean, interactiveApproval?: "approved"): RunInput {
     if (!Array.isArray(values) || !values.every(Number.isFinite) || typeof requiresApproval !== "boolean") {
       throw new Error("invalid fixture workflow input");
+    }
+    if (!requiresApproval && interactiveApproval === "approved") {
+      throw new Error("cannot record consent for a workflow not requiring approval");
     }
     return {
       workflowId: manifest.id,
       workflowVersion: manifest.version,
       sourceSha256: manifest.sourceSha256,
+      interactiveApproval: requiresApproval ? (interactiveApproval ?? "not_recorded") : "not_required",
       input: { values, requiresApproval },
     };
   }

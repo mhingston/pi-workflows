@@ -167,7 +167,7 @@ export function createWorkflowInvocationService(config: InvocationConfig): Workf
     try {
       const root = await harness.root(ctx);
       const id = await root.commit(tx => tx.createTask(fixture.Run,
-        fixture.input(typed.values, typed.requiresApproval), { ownership: { kind: "conversation" } }), ctx);
+        fixture.input(typed.values, typed.requiresApproval, typed.requiresApproval ? "approved" : undefined), { ownership: { kind: "conversation" } }), ctx);
       const settled = await harness.waitForTask(id, ctx);
       const outcome = settled.state.outcome;
       if (outcome.status === "completed") {
