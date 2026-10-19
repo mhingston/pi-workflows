@@ -88,9 +88,10 @@ function render() {
   const enabled = Boolean(state.graph.canvasEnabled);
   $("palette").classList.toggle("unavailable", !enabled);
   $("canvas-mode").textContent = enabled
-    ? "Drag a step to add it; connect output to input to change source order."
+    ? "Drag steps to author TypeScript; one IF branch may route steps to TRUE/FALSE arms."
     : "Visual authoring disabled: add canvas-start/end markers inside runWorkflow in TypeScript.";
-  for (const button of document.querySelectorAll(".palette-step")) button.disabled = !enabled;
+  for (const button of document.querySelectorAll(".palette-step")) button.disabled = !enabled ||
+    (button.dataset.kind === "branch" && state.graph.nodes.some(n => n.canvasBranch));
   closeDownloads(); // Existing Blob URLs refer to an older artifact snapshot.
   if ($("code").value === displaySource(state.files.source)) codeDraft = false;
   if (!codeDraft) $("code").value = displaySource(state.files.source);
@@ -190,8 +191,9 @@ function renderEdges() {
     const curve = Math.max(30, Math.abs(x2 - x1) / 2);
     path.setAttribute("d", "M " + x1 + " " + y1 + " C " +
       (x1 + curve) + " " + y1 + " " + (x2 - curve) + " " + y2 + " " + x2 + " " + y2);
-    path.setAttribute("class", edge.kind === "sequence" ? "edge sequence" : "edge");
-    if (edge.kind === "sequence") path.setAttribute("marker-end", "url(#sequence-arrow)");
+    const executable = edge.kind !== "illustrative";
+    path.setAttribute("class", executable ? "edge source-edge " + edge.kind : "edge");
+    if (executable) path.setAttribute("marker-end", "url(#sequence-arrow)");
     svg.append(path);
   }
 }
@@ -210,7 +212,8 @@ function renderNodes() {
     el.style.top = pos.y + "px";
     el.append(text("small", node.category.toUpperCase(), "kind"));
     el.append(text("strong", node.label));
-    el.append(text("small", node.canvasKind ? "Drag handles to reorder" :
+    el.append(text("small", node.canvasBranch ? "TRUE / FALSE source lanes" :
+      node.canvasKind ? "Lane: " + (node.lane === "top" ? "sequential" : node.lane.toUpperCase()) :
       node.editable ? "Editable name" : "Source preserved", "detail"));
     if (node.canvasKind) {
       const input = text("button", "IN", "port input");
@@ -218,11 +221,20 @@ function renderNodes() {
       input.title = "Drop another managed step's output here to place this step after it";
       input.setAttribute("aria-label", "Step input: " + node.label);
       input.addEventListener("dragover", event => {
-        if (event.dataTransfer?.types.includes("application/x-pi-connect")) event.preventDefault();
+        if (event.dataTransfer?.types.includes("application/x-pi-connect") ||
+            event.dataTransfer?.types.includes("application/x-pi-branch")) event.preventDefault();
       });
       input.addEventListener("drop", event => {
         event.preventDefault();
         event.stopPropagation();
+        const branch = event.dataTransfer?.getData("application/x-pi-branch");
+        if (branch) {
+          try {
+            const { from, arm } = JSON.parse(branch);
+            api("connect-branch", { from, arm, to: node.id });
+          } catch { message("Invalid branch connection.", true); }
+          return;
+        }
         const from = event.dataTransfer?.getData("application/x-pi-connect");
         if (from && from !== node.id) api("connect-step", { from, to: node.id });
       });
@@ -237,6 +249,21 @@ function renderNodes() {
         event.dataTransfer.effectAllowed = "move";
       });
       el.append(input, output);
+    }
+    if (node.canvasBranch) {
+      for (const arm of ["then", "else"]) {
+        const output = text("button", arm === "then" ? "TRUE" : "FALSE", "port output " + arm);
+        output.type = "button";
+        output.draggable = true;
+        output.title = "Connect this branch arm to a managed step's IN port";
+        output.setAttribute("aria-label", arm + " branch output");
+        output.addEventListener("dragstart", event => {
+          if (pendingAction || codeDraft) { event.preventDefault(); return; }
+          event.dataTransfer.setData("application/x-pi-branch", JSON.stringify({ from: node.id, arm }));
+          event.dataTransfer.effectAllowed = "move";
+        });
+        el.append(output);
+      }
     }
     el.addEventListener("click", () => select(node.id));
     el.addEventListener("keydown", event => {
@@ -294,11 +321,19 @@ function inspect() {
   if (!node) { inspector.append(text("p", "Select a node to inspect its source mapping.")); return; }
   inspector.append(text("h3", node.label));
   if (node.canvasKind) inspector.append(text("p", "Executable managed " + node.canvasKind +
-    " step. Connections can only reorder this linear source region."));
+    " step in " + (node.lane ?? "top") + " lane. Same-lane connections change statement order."));
+  if (node.canvasBranch) inspector.append(text("p",
+    "Fixed boolean condition: input.requiresApproval. TRUE and FALSE outputs move a step into the matching TypeScript arm."));
   inspector.append(text("p", "Kind: " + node.kind + " / " + node.category));
   inspector.append(text("p", node.anchor ?
     "UTF-16 source span: " + node.anchor.start + "–" + node.anchor.end :
     "No source anchor; code remains authoritative."));
+  if (node.canvasBranch) {
+    const remove = text("button", "Delete empty branch", "danger");
+    remove.addEventListener("click", () => api("remove-branch", { id: node.id }));
+    inspector.append(remove);
+    return;
+  }
   if (!node.editable) {
     inspector.append(text("p", "No safe visual properties. Edit unrecognized logic in the code pane."));
     return;
@@ -313,9 +348,14 @@ function inspect() {
   button.addEventListener("click", () => api("property", { id: node.id, value: input.value }));
   inspector.append(button);
   if (node.canvasKind) {
+    if (node.lane !== "top") {
+      const leave = text("button", "Disconnect from branch (move after IF)");
+      leave.addEventListener("click", () => api("disconnect-branch", { id: node.id }));
+      inspector.append(leave);
+    }
     const choice = text("label", "Place this step after");
     const select = document.createElement("select");
-    for (const other of state.graph.nodes.filter(n => n.canvasKind && n.id !== node.id)) {
+    for (const other of state.graph.nodes.filter(n => n.canvasKind && n.id !== node.id && n.lane === node.lane)) {
       const option = text("option", other.label);
       option.value = other.id;
       select.append(option);
@@ -358,7 +398,7 @@ function downloads() {
   }
   $("download").after(panel);
 }
-const defaults = { hook: "new hook", agent: "new agent", approval: "Review required" };
+const defaults = { hook: "new hook", agent: "new agent", approval: "Review required", branch: "" };
 for (const button of document.querySelectorAll(".palette-step")) {
   const kind = button.dataset.kind;
   button.addEventListener("dragstart", event => {
@@ -368,7 +408,7 @@ for (const button of document.querySelectorAll(".palette-step")) {
   });
   button.addEventListener("click", () => {
     const viewport = $("viewport");
-    api("add-step", { kind, name: defaults[kind],
+    api(kind === "branch" ? "add-branch" : "add-step", { ...(kind === "branch" ? {} : { kind, name: defaults[kind] }),
       x: Math.max(0, Math.round(viewport.scrollLeft + viewport.clientWidth / 2 - 120)),
       y: Math.max(0, Math.round(viewport.scrollTop + viewport.clientHeight / 2 - 38)) });
   });
@@ -384,7 +424,7 @@ $("viewport").addEventListener("drop", event => {
   if (!Object.hasOwn(defaults, kind) || !state?.graph.canvasEnabled) return;
   event.preventDefault();
   const rect = $("stage").getBoundingClientRect();
-  api("add-step", { kind, name: defaults[kind],
+  api(kind === "branch" ? "add-branch" : "add-step", { ...(kind === "branch" ? {} : { kind, name: defaults[kind] }),
     x: Math.max(0, Math.round(event.clientX - rect.left - 120)),
     y: Math.max(0, Math.round(event.clientY - rect.top - 38)) });
 });
