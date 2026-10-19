@@ -9,10 +9,13 @@ import { join } from "node:path";
 import type { EffectPort, EffectAttempt } from "../../fixtures/durable/workflow.ts";
 
 export class FileEffectPort implements EffectPort {
-  constructor(
-    private readonly directory: string,
-    public readonly afterApply?: (result: EffectAttempt) => Promise<void>,
-  ) {}
+  private readonly directory: string;
+  readonly afterApply?: (result: EffectAttempt) => Promise<void>;
+
+  constructor(directory: string, afterApply?: (result: EffectAttempt) => Promise<void>) {
+    this.directory = directory;
+    this.afterApply = afterApply;
+  }
 
   static keyPath(directory: string, key: string): string {
     const digest = createHash("sha256").update(key, "utf8").digest("hex");
