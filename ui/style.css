@@ -59,3 +59,20 @@ h3 { color: #d7e5f1; }
 .runtime-tree, .runtime-tree ul { list-style: none; padding-left: 20px; border-left: 1px solid #63849c; margin: 8px 14px; }
 .runtime-tree li { margin: 8px 0; font-size: 12px; }
 .runtime-state { display: block; margin: 3px 0; color: #bdcedb; }
+
+/* Source-backed canvas authoring controls. Only ordered managed nodes get solid arrows. */
+.palette { display: flex; gap: 9px; align-items: center; padding: 9px 14px; border-bottom: 1px solid #354657; background: #1c2a38; flex-wrap: wrap; }
+.palette strong { font-size: 12px; color: #c3d7e7; margin-right: 7px; }
+.palette small { color: #abc0d0; font-size: 11px; }
+.palette.unavailable { opacity: .65; }
+.palette-step { border: 1px dashed #82afd1; background: #253f54; font-size: 12px; cursor: grab; }
+.palette-step:disabled { opacity: .5; cursor: not-allowed; }
+.edge.sequence { stroke: #72c7b5; stroke-width: 3; stroke-dasharray: none; opacity: 1; }
+.node.canvas { border-color: #72c7b5; background: #213e42; padding-right: 36px; }
+.port { position: absolute; z-index: 2; width: 37px; height: 25px; padding: 3px 4px; border-radius: 16px; background: #154d51; color: #e4fff9; border: 1px solid #81dccc; font-size: 9px; font-weight: 700; cursor: crosshair; user-select: none; touch-action: auto; }
+.port.input { top: 20px; left: -22px; }
+.port.output { top: 20px; right: -22px; }
+.port:hover, .port:focus-visible { background: #1e7c7e; }
+.properties select { width: 100%; padding: 8px; color: #fff; background: #1d2938; border: 1px solid #6c8598; border-radius: 5px; }
+button.danger { margin: 10px 0; background: #552a30; border-color: #b46f7b; }
+@media (max-width: 850px) { .palette { flex-wrap: wrap; } }

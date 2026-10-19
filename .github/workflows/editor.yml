@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "src/editor.ts"
+      - "src/canvas.ts"
       - "src/editor-server.ts"
       - "ui/**"
       - "fixtures/**"
@@ -29,6 +30,8 @@ jobs:
           node-version: "22.21.1"
       - name: Install pinned dependencies
         run: npm install --ignore-scripts --no-audit --no-fund
+      - name: Browser script syntax
+        run: node --check ui/app.js && node --check ui/source-text.js
       - name: Typecheck
         run: npm run typecheck
       - name: Artifact contracts

@@ -56,6 +56,7 @@ async function api(type, fields = {}) {
       type === "reload" ? "Package reloaded." : "Applied " + type + " change in memory. Save to disk when ready.");
   } catch (error) {
     message(error.message, true);
+    if (!codeDraft && state) render(); // Revert optimistic dragging on rejected changes.
   } finally {
     pendingAction = false;
   }
@@ -84,6 +85,12 @@ function render() {
   $("dirty").textContent = state.dirty ? "Unsaved changes" : "Unmodified";
   $("dirty").classList.toggle("dirty", state.dirty);
   $("notice").textContent = state.graph.notice;
+  const enabled = Boolean(state.graph.canvasEnabled);
+  $("palette").classList.toggle("unavailable", !enabled);
+  $("canvas-mode").textContent = enabled
+    ? "Drag a step to add it; connect output to input to change source order."
+    : "Visual authoring disabled: add canvas-start/end markers inside runWorkflow in TypeScript.";
+  for (const button of document.querySelectorAll(".palette-step")) button.disabled = !enabled;
   closeDownloads(); // Existing Blob URLs refer to an older artifact snapshot.
   if ($("code").value === displaySource(state.files.source)) codeDraft = false;
   if (!codeDraft) $("code").value = displaySource(state.files.source);
@@ -159,7 +166,23 @@ function renderEdges() {
   stageSize();
   const svg = $("edges");
   svg.replaceChildren();
-  for (const edge of state.graph.edges) {
+  const ns = "http://www.w3.org/2000/svg";
+  const defs = document.createElementNS(ns, "defs");
+  const marker = document.createElementNS(ns, "marker");
+  marker.setAttribute("id", "sequence-arrow");
+  marker.setAttribute("viewBox", "0 0 10 10");
+  marker.setAttribute("refX", "9");
+  marker.setAttribute("refY", "5");
+  marker.setAttribute("markerWidth", "7");
+  marker.setAttribute("markerHeight", "7");
+  marker.setAttribute("orient", "auto-start-reverse");
+  const arrow = document.createElementNS(ns, "path");
+  arrow.setAttribute("d", "M 0 0 L 10 5 L 0 10 z");
+  arrow.setAttribute("fill", "#72c7b5");
+  marker.append(arrow);
+  defs.append(marker);
+  svg.append(defs);
+  for (const edge of [...state.graph.edges, ...(state.graph.sequenceEdges ?? [])]) {
     const a = positions.get(edge.from), b = positions.get(edge.to);
     if (!a || !b) continue;
     const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
@@ -167,7 +190,8 @@ function renderEdges() {
     const curve = Math.max(30, Math.abs(x2 - x1) / 2);
     path.setAttribute("d", "M " + x1 + " " + y1 + " C " +
       (x1 + curve) + " " + y1 + " " + (x2 - curve) + " " + y2 + " " + x2 + " " + y2);
-    path.setAttribute("class", "edge");
+    path.setAttribute("class", edge.kind === "sequence" ? "edge sequence" : "edge");
+    if (edge.kind === "sequence") path.setAttribute("marker-end", "url(#sequence-arrow)");
     svg.append(path);
   }
 }
@@ -186,13 +210,40 @@ function renderNodes() {
     el.style.top = pos.y + "px";
     el.append(text("small", node.category.toUpperCase(), "kind"));
     el.append(text("strong", node.label));
-    el.append(text("small", node.editable ? "Editable name" : "Source preserved", "detail"));
+    el.append(text("small", node.canvasKind ? "Drag handles to reorder" :
+      node.editable ? "Editable name" : "Source preserved", "detail"));
+    if (node.canvasKind) {
+      const input = text("button", "IN", "port input");
+      input.type = "button";
+      input.title = "Drop another managed step's output here to place this step after it";
+      input.setAttribute("aria-label", "Step input: " + node.label);
+      input.addEventListener("dragover", event => {
+        if (event.dataTransfer?.types.includes("application/x-pi-connect")) event.preventDefault();
+      });
+      input.addEventListener("drop", event => {
+        event.preventDefault();
+        event.stopPropagation();
+        const from = event.dataTransfer?.getData("application/x-pi-connect");
+        if (from && from !== node.id) api("connect-step", { from, to: node.id });
+      });
+      const output = text("button", "OUT", "port output");
+      output.type = "button";
+      output.draggable = true;
+      output.title = "Drag onto another managed step's input to place it immediately after this step";
+      output.setAttribute("aria-label", "Step output: " + node.label);
+      output.addEventListener("dragstart", event => {
+        if (pendingAction || codeDraft) { event.preventDefault(); return; }
+        event.dataTransfer.setData("application/x-pi-connect", node.id);
+        event.dataTransfer.effectAllowed = "move";
+      });
+      el.append(input, output);
+    }
     el.addEventListener("click", () => select(node.id));
     el.addEventListener("keydown", event => {
       if (event.key === "Enter" || event.key === " ") { event.preventDefault(); select(node.id); }
     });
     el.addEventListener("pointerdown", event => {
-      if (event.button !== 0) return;
+      if (event.button !== 0 || event.target.closest(".port")) return;
       if (pendingAction) {
         message("Finish the current edit before dragging nodes.", true);
         return;
@@ -242,6 +293,8 @@ function inspect() {
   const node = state.graph.nodes.find(n => n.id === selected);
   if (!node) { inspector.append(text("p", "Select a node to inspect its source mapping.")); return; }
   inspector.append(text("h3", node.label));
+  if (node.canvasKind) inspector.append(text("p", "Executable managed " + node.canvasKind +
+    " step. Connections can only reorder this linear source region."));
   inspector.append(text("p", "Kind: " + node.kind + " / " + node.category));
   inspector.append(text("p", node.anchor ?
     "UTF-16 source span: " + node.anchor.start + "–" + node.anchor.end :
@@ -259,6 +312,27 @@ function inspect() {
   const button = text("button", "Apply name");
   button.addEventListener("click", () => api("property", { id: node.id, value: input.value }));
   inspector.append(button);
+  if (node.canvasKind) {
+    const choice = text("label", "Place this step after");
+    const select = document.createElement("select");
+    for (const other of state.graph.nodes.filter(n => n.canvasKind && n.id !== node.id)) {
+      const option = text("option", other.label);
+      option.value = other.id;
+      select.append(option);
+    }
+    choice.append(select);
+    inspector.append(choice);
+    const reorder = text("button", "Change source order");
+    reorder.disabled = !select.options.length;
+    reorder.addEventListener("click", () => api("connect-step", { from: select.value, to: node.id }));
+    inspector.append(reorder);
+    const remove = text("button", "Delete step", "danger");
+    remove.addEventListener("click", () => {
+      if (confirm("Delete this managed step and its executable statement?"))
+        api("remove-step", { id: node.id });
+    });
+    inspector.append(remove);
+  }
 }
 function downloads() {
   if (codeDraft) { message("Apply your code-pane draft before exporting.", true); return; }
@@ -284,6 +358,36 @@ function downloads() {
   }
   $("download").after(panel);
 }
+const defaults = { hook: "new hook", agent: "new agent", approval: "Review required" };
+for (const button of document.querySelectorAll(".palette-step")) {
+  const kind = button.dataset.kind;
+  button.addEventListener("dragstart", event => {
+    if (pendingAction || codeDraft || !state?.graph.canvasEnabled) { event.preventDefault(); return; }
+    event.dataTransfer.setData("application/x-pi-step", kind);
+    event.dataTransfer.effectAllowed = "copy";
+  });
+  button.addEventListener("click", () => {
+    const viewport = $("viewport");
+    api("add-step", { kind, name: defaults[kind],
+      x: Math.max(0, Math.round(viewport.scrollLeft + viewport.clientWidth / 2 - 120)),
+      y: Math.max(0, Math.round(viewport.scrollTop + viewport.clientHeight / 2 - 38)) });
+  });
+}
+$("viewport").addEventListener("dragover", event => {
+  if (event.dataTransfer?.types.includes("application/x-pi-step") && state?.graph.canvasEnabled) {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+  }
+});
+$("viewport").addEventListener("drop", event => {
+  const kind = event.dataTransfer?.getData("application/x-pi-step");
+  if (!Object.hasOwn(defaults, kind) || !state?.graph.canvasEnabled) return;
+  event.preventDefault();
+  const rect = $("stage").getBoundingClientRect();
+  api("add-step", { kind, name: defaults[kind],
+    x: Math.max(0, Math.round(event.clientX - rect.left - 120)),
+    y: Math.max(0, Math.round(event.clientY - rect.top - 38)) });
+});
 $("code").addEventListener("input", () => {
   codeDraft = $("code").value !== displaySource(state?.files.source ?? "");
 });

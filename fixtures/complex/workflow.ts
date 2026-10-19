@@ -36,5 +36,7 @@ export async function runWorkflow(input: WorkflowInput, ports: WorkflowPorts): P
   const mapped = (n: number) => n * 2;
   const output = mapped(total);
   await ports.hook("after", output);
+  // @pi-workflows:canvas-start
+  // @pi-workflows:canvas-end
   return output;
 }
