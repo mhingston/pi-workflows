@@ -130,7 +130,11 @@ for (const scenario of ["matching", "conflict", "unknown"] as const) {
             if (result.status === "completed") {
               assert.equal(result.output, 10);
               assert.equal(result.approvalDisposition, "already_applied");
-              assert.deepEqual(result.steps.map(step => step.taskId), childrenBefore);
+              assert.deepEqual(
+                result.steps.map(step => step.taskId).sort((a, b) => a - b),
+                [...childrenBefore].sort((a, b) => a - b),
+                "same native children, irrespective of parallel completion order",
+              );
               for (const step of result.steps) {
                 const child = await harness.getTask(step.taskId as TaskId<number>, ctx);
                 assert.equal(child?.state.status, "terminal");
@@ -143,7 +147,11 @@ for (const scenario of ["matching", "conflict", "unknown"] as const) {
             assert.equal(result.status, "needs_reconciliation", "uncertain/conflicting status must fail closed");
             if (result.status === "needs_reconciliation") {
               assert.equal(result.effectKey, idempotencyKey);
-              assert.deepEqual(result.steps.map(step => step.taskId), childrenBefore);
+              assert.deepEqual(
+                result.steps.map(step => step.taskId).sort((a, b) => a - b),
+                [...childrenBefore].sort((a, b) => a - b),
+                "same native children, irrespective of parallel completion order",
+              );
             }
           }
         }
@@ -239,7 +247,11 @@ test("SIGKILL after native approval memo restores applied disposition without co
         if (result.status === "completed") {
           assert.equal(result.output, 10);
           assert.equal(result.approvalDisposition, "applied", "saved provider status must survive replay");
-          assert.deepEqual(result.steps.map(step => step.taskId), childrenBefore);
+          assert.deepEqual(
+                result.steps.map(step => step.taskId).sort((a, b) => a - b),
+                [...childrenBefore].sort((a, b) => a - b),
+                "same native children, irrespective of parallel completion order",
+              );
         }
       }
       assert.equal(replayCalls, 0, "no external provider request follows a saved native receipt");
