@@ -195,15 +195,35 @@ export async function editCode(workflow: LoadedWorkflow, source: string): Promis
   if (source === workflow.source) return workflow;
   parse(source);
   if (!workflow.layout) return updated(workflow, source);
+  // A single contiguous changed range can be mapped exactly. A broad rewrite
+  // that partly overlaps anchors is deliberately rejected, never guessed.
+  let prefix = 0;
+  while (prefix < workflow.source.length && prefix < source.length &&
+         workflow.source[prefix] === source[prefix]) prefix++;
+  let suffix = 0;
+  while (suffix < workflow.source.length - prefix && suffix < source.length - prefix &&
+         workflow.source[workflow.source.length - 1 - suffix] === source[source.length - 1 - suffix]) suffix++;
+  const oldEnd = workflow.source.length - suffix;
+  const delta = source.length - workflow.source.length;
   const nodes = [];
   for (const node of workflow.layout.nodes) {
     if (!node.anchor) { nodes.push(node); continue; }
-    const snippet = workflow.source.slice(node.anchor.start, node.anchor.end);
-    const start = source.indexOf(snippet);
-    if (start < 0 || start !== source.lastIndexOf(snippet)) {
-      fail("cannot uniquely remap anchor " + node.id + "; use source editor and explicitly reconcile layout");
+    const old = node.anchor;
+    let a = old.start, b = old.end;
+    if (b <= prefix) { /* preceding anchor unchanged */ }
+    else if (a >= oldEnd) { a += delta; b += delta; }
+    else if (a <= prefix && b >= oldEnd) { b += delta; }
+    else {
+      // An unchanged anchor may have moved as a whole; only a unique match is safe.
+      const snippet = workflow.source.slice(a, b);
+      const match = source.indexOf(snippet);
+      if (match < 0 || match !== source.lastIndexOf(snippet)) {
+        fail("cannot safely remap anchor " + node.id + "; separate/reconcile this code edit");
+      }
+      a = match;
+      b = match + snippet.length;
     }
-    nodes.push({ ...node, anchor: await anchor(source, start, start + snippet.length) });
+    nodes.push({ ...node, anchor: await anchor(source, a, b) });
   }
   return updated(workflow, source, { ...workflow.layout, nodes });
 }
