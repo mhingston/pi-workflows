@@ -188,7 +188,8 @@ function renderEdges() {
     const a = positions.get(edge.from), b = positions.get(edge.to);
     if (!a || !b) continue;
     const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-    const x1 = a.x + 240, y1 = a.y + 38, x2 = b.x, y2 = b.y + 38;
+    const x1 = a.x + 240, y1 = a.y + (edge.kind === "then" ? 30 : edge.kind === "else" ? 67 : 38),
+      x2 = b.x, y2 = b.y + 38;
     const curve = Math.max(30, Math.abs(x2 - x1) / 2);
     path.setAttribute("d", "M " + x1 + " " + y1 + " C " +
       (x1 + curve) + " " + y1 + " " + (x2 - curve) + " " + y2 + " " + x2 + " " + y2);
