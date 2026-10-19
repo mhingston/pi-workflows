@@ -1,0 +1,34 @@
+name: Native Pi Durable workflow execution
+
+on:
+  pull_request:
+    paths:
+      - "src/**"
+      - "fixtures/**"
+      - "tests/**"
+      - "package.json"
+      - "tsconfig.json"
+      - ".github/workflows/durable.yml"
+      - "docs/durable-runtime.md"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  durable-runner:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.21.1"
+      - name: Install pinned dependencies
+        run: npm install --ignore-scripts --no-audit --no-fund
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Run artifact contract tests
+        run: npm run test:artifact
+      - name: Run recovery and SIGKILL fault-injection tests
+        run: npm run test:durable
