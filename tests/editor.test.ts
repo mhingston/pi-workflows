@@ -352,3 +352,40 @@ test("local server can add, connect, remove and save executable canvas nodes", a
     await rm(folder, { recursive: true, force: true });
   }
 });
+
+
+test("canvas rejects preceding unbraced if that consumes only the first managed step", async () => {
+  const original = await loadWorkflow(await files());
+  const first = await editCanvas(original, { type: "add-step", kind: "hook", name: "first", x: 10, y: 10 });
+  const second = await editCanvas(first, { type: "add-step", kind: "approval", name: "must-run", x: 300, y: 10 });
+  const conditional = second.source.replace(
+    "  // @pi-workflows:canvas-start",
+    "  if (input.requiresApproval)\n  // @pi-workflows:canvas-start",
+  );
+  const invalid = await loadWorkflow({
+    source: conditional,
+    manifestJson: JSON.stringify({ ...second.manifest, sourceSha256: await sha256(conditional) }),
+  });
+  await assert.rejects(editCanvas(invalid, { type: "remove-step", id: readCanvas(second.source)!.steps[0]!.id }),
+    /top level of async runWorkflow/);
+  await assert.rejects(projectWorkflow(invalid), /top level of async runWorkflow/);
+});
+
+test("canvas rejects standalone-looking markers inside block comments and template strings", async () => {
+  const original = await loadWorkflow(await files());
+  const markerPair = "  // @pi-workflows:canvas-start\n  // @pi-workflows:canvas-end\n";
+  const samples = [
+    "  /*\n" + markerPair + "  */\n",
+    "  const dormant = \`\n" + markerPair + "  \`;\n",
+  ];
+  for (const replacement of samples) {
+    const altered = original.source.replace(markerPair, replacement);
+    const invalid = await loadWorkflow({
+      source: altered,
+      manifestJson: JSON.stringify({ ...original.manifest, sourceSha256: await sha256(altered) }),
+    });
+    await assert.rejects(editCanvas(invalid, { type: "add-step", kind: "approval",
+      name: "must-run", x: 0, y: 0 }), /actual standalone/);
+    await assert.rejects(projectWorkflow(invalid), /actual standalone/);
+  }
+});
