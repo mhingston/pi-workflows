@@ -1,0 +1,53 @@
+:root { font-family: system-ui, -apple-system, sans-serif; color: #e6eaf5; background: #121820; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+header { padding: 13px 20px; display: flex; justify-content: space-between; gap: 16px; align-items: center; background: #1a2533; border-bottom: 1px solid #394858; }
+header > div { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+nav { display: flex; gap: 8px; align-items: center; }
+button { border-radius: 7px; padding: 8px 13px; background: #25384a; color: #f4f8ff; border: 1px solid #566878; cursor: pointer; font: inherit; }
+button:hover, button:focus-visible { border-color: #73b8ef; }
+button.primary { background: #146ca0; }
+.pill { background: #263541; padding: 4px 10px; border-radius: 20px; font-size: 12px; }
+.pill.dirty { color: #fedf9a; background: #49391e; }
+#status { margin: 0; padding: 9px 20px; color: #9eafc1; min-height: 39px; }
+#status.error { color: #ffafaa; background: #392326; }
+main { display: grid; grid-template-columns: minmax(480px, 3fr) minmax(300px, 1.35fr); gap: 0; height: calc(100vh - 109px); }
+section.graph-panel { min-width: 0; display: flex; flex-direction: column; background: #111a25; }
+.panel-title { display: flex; justify-content: space-between; align-items: center; padding: 12px 14px; gap: 12px; border-bottom: 1px solid #334252; }
+.panel-title small { font-size: 11px; color: #a7b6c5; line-height: 1.35; }
+#viewport { overflow: auto; flex: 1; min-height: 0; }
+#stage { position: relative; background-image: radial-gradient(#354350 1px, transparent 1px); background-size: 20px 20px; }
+#edges, #nodes { position: absolute; inset: 0; pointer-events: none; }
+.edge { fill: none; stroke: #819ba9; stroke-width: 2.5; stroke-dasharray: 7 6; opacity: .9; }
+.node { pointer-events: auto; position: absolute; width: 240px; min-height: 78px; display: flex; flex-direction: column; gap: 7px; padding: 11px; background: #263745; border: 2px solid #6a8293; border-radius: 10px; cursor: grab; user-select: none; touch-action: none; box-shadow: 0 5px 15px #0006; }
+.node:active { cursor: grabbing; }
+.node.selected, .node:focus-visible { outline: 3px solid #d5a74a; outline-offset: 2px; }
+.node.branch { border-color: #a783d9; }
+.node.parallel { border-color: #64aaa7; }
+.node.dynamic { border-color: #ce9959; }
+.node.opaque { border-color: #dc8585; }
+.node.call { border-color: #659de2; }
+.node small { font-size: 10px; letter-spacing: .5px; }
+.node .kind { color: #b1cee5; }
+.node .detail { color: #afbac8; }
+footer { font-size: 12px; padding: 10px 15px; border-top: 1px solid #344657; color: #b1bcc9; }
+aside { min-height: 0; border-left: 1px solid #354555; display: flex; flex-direction: column; }
+.properties { min-height: 180px; padding: 16px; border-bottom: 1px solid #354555; }
+h2, h3 { margin: 0 0 12px; font-size: 16px; }
+h3 { color: #d7e5f1; }
+.properties p { font-size: 13px; color: #b4c3d2; overflow-wrap: anywhere; }
+.properties label { display: flex; flex-direction: column; gap: 7px; margin: 10px 0; font-size: 13px; }
+.properties input { width: 100%; padding: 8px; color: #fff; background: #1d2938; border: 1px solid #6c8598; border-radius: 5px; }
+.source { min-height: 0; flex: 1; display: flex; flex-direction: column; }
+.source .panel-title h2 { margin: 0; }
+#code { resize: none; flex: 1; margin: 10px; min-height: 150px; font: 12px/1.5 ui-monospace, monospace; padding: 12px; background: #0b1119; color: #d7e4ef; border: 1px solid #4b6375; tab-size: 2; }
+.source > small { padding: 0 12px 14px; color: #adbcc9; font-size: 11px; }
+#downloads { position: absolute; z-index: 5; top: 56px; right: 120px; background: #293a4d; padding: 15px; border: 1px solid #6c8598; border-radius: 8px; box-shadow: 0 8px 25px #0008; display: flex; flex-direction: column; gap: 10px; }
+#downloads a { color: #bfe5ff; }
+@media (max-width: 850px) {
+  header { flex-direction: column; align-items: flex-start; }
+  main { display: flex; flex-direction: column; height: auto; }
+  .graph-panel { min-height: 480px; }
+  aside { min-height: 670px; border-left: none; }
+  #code { min-height: 300px; }
+}
