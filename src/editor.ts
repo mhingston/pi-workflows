@@ -1,0 +1,209 @@
+/**
+ * A deliberately conservative TypeScript -> visual projection.
+ * Graph nodes are authoring hints. Neither this module nor the UI evaluates TS.
+ */
+import ts from "typescript";
+import {
+  ArtifactError, loadWorkflow, sha256, type LoadedWorkflow, type ProjectionNode,
+  type SourceAnchor, type WorkflowLayout,
+} from "./artifact.ts";
+
+export type EditorCategory = "branch" | "parallel" | "dynamic" | "call" | "opaque";
+export interface EditorNode extends ProjectionNode {
+  readonly category: EditorCategory;
+  readonly editable?: { readonly field: "name"; readonly value: string };
+}
+export interface EditorGraph {
+  readonly nodes: readonly EditorNode[];
+  readonly edges: WorkflowLayout["edges"];
+  readonly notice: string;
+}
+interface Candidate {
+  id: string;
+  category: EditorCategory;
+  kind: ProjectionNode["kind"];
+  label: string;
+  start: number;
+  end: number;
+  argument?: { start: number; end: number; value: string };
+}
+const NOTICE = "Dashed edges are illustrative layout hints, never execution dependencies. Dynamic and opaque code remains in workflow.ts.";
+
+function fail(message: string): never { throw new ArtifactError("editor: " + message); }
+
+function parse(source: string): ts.SourceFile {
+  const file = ts.createSourceFile("workflow.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const diagnostics = (file as ts.SourceFile & { parseDiagnostics?: readonly ts.Diagnostic[] }).parseDiagnostics ?? [];
+  if (diagnostics.length) {
+    const error = diagnostics[0]!;
+    const where = file.getLineAndCharacterOfPosition(error.start ?? 0);
+    fail("invalid TypeScript at " + (where.line + 1) + ":" + (where.character + 1) +
+      ": " + ts.flattenDiagnosticMessageText(error.messageText, " "));
+  }
+  return file;
+}
+
+/** An intentionally small, statically recognisable subset; no inferred runtime task edges. */
+function candidates(source: string): Candidate[] {
+  const file = parse(source);
+  const found: Candidate[] = [];
+  const counts = new Map<string, number>();
+  function add(node: ts.Node, category: EditorCategory, kind: ProjectionNode["kind"],
+               label: string, prefix: string, argument?: Candidate["argument"]): void {
+    const count = (counts.get(prefix) ?? 0) + 1;
+    counts.set(prefix, count);
+    found.push({
+      id: "ast_" + prefix + "_" + count, category, kind, label,
+      start: node.getStart(file), end: node.end, argument,
+    });
+  }
+  function visit(node: ts.Node): void {
+    if (ts.isIfStatement(node)) add(node, "branch", "known", "Branch (if)", "branch");
+    if (ts.isForStatement(node) || ts.isForOfStatement(node) ||
+        ts.isForInStatement(node) || ts.isWhileStatement(node) ||
+        ts.isDoStatement(node)) {
+      add(node, "dynamic", "dynamic", "Loop / dynamic region", "loop");
+    }
+    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
+      const receiver = node.expression.expression;
+      const method = node.expression.name.text;
+      if (ts.isIdentifier(receiver) && receiver.text === "Promise" && method === "all") {
+        add(node, "parallel", "known", "Parallel region (Promise.all)", "parallel");
+      }
+      if (ts.isIdentifier(receiver) && receiver.text === "ports" &&
+          (method === "hook" || method === "agent" || method === "approve")) {
+        const arg = node.arguments[0];
+        if (arg && ts.isStringLiteral(arg)) {
+          add(node, "call", "known", "ports." + method + " (" + arg.text + ")",
+            method, { start: arg.getStart(file), end: arg.end, value: arg.text });
+        }
+        // Computed names and nonliteral arguments stay in the code pane.
+      }
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(file);
+  return found.sort((a, b) => a.start - b.start || a.end - b.end);
+}
+
+async function anchor(source: string, start: number, end: number): Promise<SourceAnchor> {
+  return { start, end, sha256: await sha256(source.slice(start, end)) };
+}
+
+/** Import validated files only; preserve pre-existing layout nodes, including unknown anchors. */
+export async function projectWorkflow(workflow: LoadedWorkflow): Promise<EditorGraph> {
+  const parsed = candidates(workflow.source);
+  const positions = new Map(workflow.layout?.nodes.map(node => [node.id, node]) ?? []);
+  const nodes: EditorNode[] = [];
+  for (const [index, item] of parsed.entries()) {
+    const previous = positions.get(item.id);
+    const actual = await anchor(workflow.source, item.start, item.end);
+    if (previous && (previous.kind !== item.kind ||
+        (previous.anchor && (previous.anchor.start !== actual.start ||
+          previous.anchor.end !== actual.end || previous.anchor.sha256 !== actual.sha256)))) {
+      fail("layout node " + item.id + " no longer matches its AST span; reconcile in code");
+    }
+    nodes.push({
+      id: item.id, category: item.category, kind: item.kind, label: item.label,
+      x: previous?.x ?? 60 + (index % 3) * 290,
+      y: previous?.y ?? 60 + Math.floor(index / 3) * 150,
+      anchor: actual,
+      ...(item.argument ? { editable: { field: "name" as const, value: item.argument.value } } : {}),
+    });
+    positions.delete(item.id);
+  }
+  for (const other of positions.values()) {
+    nodes.push({ ...other, category: other.kind === "dynamic" ? "dynamic" : "opaque" });
+  }
+  if (!nodes.some(n => n.kind === "opaque")) {
+    nodes.push({
+      id: "opaque_source", kind: "opaque", category: "opaque",
+      label: "Other TypeScript — use code pane", x: 60, y: 60 + Math.ceil(nodes.length / 3) * 150,
+    });
+  }
+  return { nodes, edges: workflow.layout?.edges ?? [], notice: NOTICE };
+}
+
+/** Dragging may create layout.json, but never changes or reconstructs source. */
+export async function moveProjectedNode(workflow: LoadedWorkflow, id: string, x: number, y: number): Promise<LoadedWorkflow> {
+  if (!Number.isFinite(x) || !Number.isFinite(y)) fail("node coordinates must be finite");
+  const projection = await projectWorkflow(workflow);
+  const selected = projection.nodes.find(node => node.id === id);
+  if (!selected) fail("unknown node: " + id);
+  if (selected.x === x && selected.y === y) return workflow;
+  const layout: WorkflowLayout = {
+    schemaVersion: 1, sourceSha256: workflow.manifest.sourceSha256,
+    nodes: projection.nodes.map(({ id: nid, kind, label, x: nx, y: ny, anchor: a }) =>
+      ({ id: nid, kind, label, x: nid === id ? x : nx, y: nid === id ? y : ny, ...(a ? { anchor: a } : {}) })),
+    edges: projection.edges,
+  };
+  return loadWorkflow({
+    ...workflow.files, layoutJson: JSON.stringify(layout, null, 2) + "\n",
+  });
+}
+
+async function remapLiteralAnchors(workflow: LoadedWorkflow, nextSource: string, start: number, end: number) {
+  if (!workflow.layout) return undefined;
+  const delta = nextSource.length - workflow.source.length;
+  const nodes = [];
+  for (const node of workflow.layout.nodes) {
+    if (!node.anchor) { nodes.push(node); continue; }
+    const old = node.anchor;
+    let a = old.start, b = old.end;
+    if (b <= start) { /* unchanged */ }
+    else if (a >= end) { a += delta; b += delta; }
+    else if (a <= start && b >= end) { b += delta; }
+    else fail("edit partly overlaps anchor " + node.id + "; edit source manually");
+    nodes.push({ ...node, anchor: await anchor(nextSource, a, b) });
+  }
+  return { ...workflow.layout, sourceSha256: await sha256(nextSource), nodes };
+}
+
+async function updated(workflow: LoadedWorkflow, source: string, layout?: WorkflowLayout): Promise<LoadedWorkflow> {
+  if (source === workflow.source) return workflow;
+  parse(source);
+  const hash = await sha256(source);
+  const manifestJson = JSON.stringify({ ...workflow.manifest, sourceSha256: hash }, null, 2) + "\n";
+  const layoutJson = layout ? JSON.stringify({ ...layout, sourceSha256: hash }, null, 2) + "\n" : undefined;
+  return loadWorkflow({ source, manifestJson, ...(layoutJson ? { layoutJson } : {}) });
+}
+
+/** Rewrite only an AST-verified string-literal argument of ports.hook/agent/approve. */
+export async function editKnownName(workflow: LoadedWorkflow, id: string, value: string): Promise<LoadedWorkflow> {
+  if (typeof value !== "string" || value.length > 500) fail("name must be a string of at most 500 characters");
+  const item = candidates(workflow.source).find(candidate => candidate.id === id);
+  if (!item?.argument) fail("node " + id + " has no safely editable literal name");
+  if (value === item.argument.value) return workflow;
+  const { start, end } = item.argument;
+  const old = workflow.source.slice(start, end);
+  if (!/^(['"])/.test(old) || old[old.length - 1] !== old[0]) fail("unsupported literal encoding");
+  // JSON encodes quotes, backslashes, control characters and line breaks safely.
+  const literal = old[0] === '"' ? JSON.stringify(value) :
+    "'" + JSON.stringify(value).slice(1, -1).replace(/\\"/g, '"').replace(/'/g, "\\'") + "'";
+  const source = workflow.source.slice(0, start) + literal + workflow.source.slice(end);
+  const layout = await remapLiteralAnchors(workflow, source, start, end);
+  return updated(workflow, source, layout);
+}
+
+/**
+ * Code edits preserve existing anchors only when each anchored substring is
+ * still uniquely identifiable. Ambiguous/modified anchors require a separate
+ * explicit source/layout reconciliation; they are NEVER silently discarded.
+ */
+export async function editCode(workflow: LoadedWorkflow, source: string): Promise<LoadedWorkflow> {
+  if (typeof source !== "string") fail("workflow.ts must be text");
+  if (source === workflow.source) return workflow;
+  parse(source);
+  if (!workflow.layout) return updated(workflow, source);
+  const nodes = [];
+  for (const node of workflow.layout.nodes) {
+    if (!node.anchor) { nodes.push(node); continue; }
+    const snippet = workflow.source.slice(node.anchor.start, node.anchor.end);
+    const start = source.indexOf(snippet);
+    if (start < 0 || start !== source.lastIndexOf(snippet)) {
+      fail("cannot uniquely remap anchor " + node.id + "; use source editor and explicitly reconcile layout");
+    }
+    nodes.push({ ...node, anchor: await anchor(source, start, start + snippet.length) });
+  }
+  return updated(workflow, source, { ...workflow.layout, nodes });
+}
