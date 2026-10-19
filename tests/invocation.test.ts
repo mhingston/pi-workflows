@@ -49,6 +49,10 @@ test("strict command parser rejects malformed JSON and implicit/natural-language
   assert.deepEqual(parseWorkflowCommand("list"), { kind: "list" });
   assert.deepEqual(parseWorkflowCommand('run dynamic_agents --input-json {"values":[1,2,3],"requiresApproval":false}'),
     { kind: "run", name: "dynamic_agents", input: { values: [1, 2, 3], requiresApproval: false } });
+  assert.deepEqual(
+    parseWorkflowCommand("run dynamic_agents --input-json '{\"values\":[1,2,3],\"requiresApproval\":false}'"),
+    { kind: "run", name: "dynamic_agents", input: { values: [1, 2, 3], requiresApproval: false } },
+  );
   assert.throws(() => parseWorkflowCommand("run dynamic_agents --input-json {no"), /Malformed/);
   assert.throws(() => parseWorkflowCommand("please run dynamic_agents"), /Usage/);
   assert.throws(() => parseWorkflowCommand("run dynamic_agents"), /Usage/);
