@@ -41,7 +41,7 @@ export function registerWorkflowExtension(pi: ExtensionAPI, makeService: Service
   const commandConflict = () => {
     const names = pi.getCommands()
       .map(command => command.name)
-      .filter(name => name === "workflow" || /^workflow:[1-9]\\d*$/.test(name));
+      .filter(name => name === "workflow" || /^workflow:[1-9]\d*$/.test(name));
     return names.length !== 1 || names[0] !== "workflow";
   };
   pi.on("session_start", async (_event, ctx) => {
