@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { request as httpRequest } from "node:http";
 import { exportWorkflow, loadWorkflow, sha256, type WorkflowFiles } from "../src/artifact.ts";
 import { editCode, editKnownName, moveProjectedNode, projectWorkflow } from "../src/editor.ts";
-import { startEditor } from "../src/editor-server.ts";
+import { readPackage, startEditor } from "../src/editor-server.ts";
 import { editCanvas, readCanvas } from "../src/canvas.ts";
 
 const source = await readFile(new URL("../fixtures/complex/workflow.ts", import.meta.url), "utf8");
@@ -344,10 +344,9 @@ test("local server can add, connect, remove and save executable canvas nodes", a
     const sourceAfter = await readFile(join(folder, "workflow.ts"), "utf8");
     assert.match(sourceAfter, /await ports.hook\("two", input\);/);
     assert.doesNotMatch(sourceAfter, /await ports.hook\("one", input\);/);
-    assert.equal((await loadWorkflow(await (async () => ({
-      source: sourceAfter, manifestJson: await readFile(join(folder, "workflow.json"), "utf8"),
-      layoutJson: await readFile(join(folder, "layout.json"), "utf8"),
-    }))())).source, sourceAfter);
+    const savedPackage = await loadWorkflow(await readPackage(folder));
+    assert.equal(savedPackage.source, sourceAfter);
+    assert.equal(savedPackage.manifest.sourceSha256, await sha256(sourceAfter));
   } finally {
     if (server) await new Promise<void>((done, reject) => server!.close(e => e ? reject(e) : done()));
     await rm(folder, { recursive: true, force: true });
