@@ -190,9 +190,11 @@ export function readCanvas(source: string): CanvasRegion | null {
 export interface SourceEdge { id: string; from: string; to: string; kind: "sequence" | "then" | "else" | "join" }
 export function canvasOrder(source: string): SourceEdge[] {
   const items = readCanvas(source)?.items ?? [], edges: SourceEdge[] = [];
-  const edge = (from: string, to: string, kind: SourceEdge["kind"]) =>
-    { if (!edges.some(e => e.from === from && e.to === to && e.kind === kind))
-        edges.push({ id: "source_" + kind + "_" + from + "_" + to, from, to, kind }); };
+  const edge = (from: string, to: string, kind: SourceEdge["kind"]) => {
+    if (!edges.some(e => e.from === from && e.to === to && e.kind === kind)) {
+      edges.push({ id: "source_" + kind + "_" + from + "_" + to, from, to, kind });
+    }
+  };
   for (let i = 1; i < items.length; i++) {
     const prev = items[i - 1]!, next = items[i]!;
     if (prev.type !== "branch") edge(prev.id, next.id, "sequence");
