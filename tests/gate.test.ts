@@ -170,7 +170,7 @@ test("release gate: same package -> offline viewer/no-op save -> Pi command & to
       for (const run of [command, tool]) {
         const record = await harness.getTask(run.runId as TaskId<WorkflowOutcome>, ctx);
         assert.ok(record, "native run record missing");
-        const metadata = record.input as RunInput;
+        const metadata = record.input as unknown as RunInput;
         assert.equal(metadata.workflowId, "dynamic_agents");
         assert.equal(metadata.workflowVersion, "1.0.0");
         assert.equal(metadata.sourceSha256, before.manifest.sourceSha256);
@@ -203,7 +203,7 @@ test("release gate: native parent resumes mid-parallel join, records source pin 
     const { Run, registry, input } = await trustedFixture({
       approve: async () => { approvals++; return true; },
     });
-    const open = () => Harness.open(await openNodeSqliteStorage(db),
+    const open = async () => Harness.open(await openNodeSqliteStorage(db),
       { models: createModels(), registry }, ctx);
     let harness = await open();
     try {
@@ -234,8 +234,10 @@ test("release gate: native parent resumes mid-parallel join, records source pin 
       }
       assert.equal(approvals, 1, "approval effect should happen only once after restart");
       const record = await harness.getTask(id, ctx);
-      assert.equal(record?.input.sourceSha256, artifact.manifest.sourceSha256);
-      assert.equal(record?.input.interactiveApproval, "not_recorded",
+      assert.ok(record);
+      const savedInput = record.input as unknown as RunInput;
+      assert.equal(savedInput.sourceSha256, artifact.manifest.sourceSha256);
+      assert.equal(savedInput.interactiveApproval, "not_recorded",
         "direct native tasks are not evidence of Pi UI consent");
       console.log("GO evidence: persisted native child join resumed on reopen with one approval effect");
     } finally {
@@ -269,7 +271,9 @@ test("release gate: capabilities fail closed and ambiguous non-idempotent effect
         { models: createModels(), registry }, ctx);
       try {
         const record = await harness.getTask(result.runId as TaskId<WorkflowOutcome>, ctx);
-        assert.equal(record?.input.interactiveApproval, "approved");
+        assert.ok(record);
+        const stored = record.input as unknown as RunInput;
+        assert.equal(stored.interactiveApproval, "approved");
         assert.equal(record?.state.status, "terminal");
         if (record?.state.status === "terminal" && record.state.outcome.status === "completed") {
           assert.equal(record.state.outcome.result.status, "needs_reconciliation");
