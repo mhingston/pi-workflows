@@ -138,6 +138,7 @@ async function inspectRun() {
     $("run-message").textContent = "Run #" + graph.runId + " · " + graph.workflowId +
       "@" + graph.workflowVersion + " · " + graph.nodes.length + " native tasks" +
       (different ? " · Different published revision from current editor source." : "") +
+      (graph.hierarchyComplete ? "" : " · Child hierarchy incomplete (missing native receipts).") +
       " · Snapshot only; refresh to update. No model/hook telemetry.";
   } catch (error) {
     runtimeGraph = null;
