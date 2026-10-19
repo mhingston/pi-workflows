@@ -37,7 +37,11 @@ export type RunState =
   | { phase: "collect"; childIds: TaskId<number>[]; values: number[] };
 
 class UncertainEffect extends Error {
-  constructor(readonly effectKey: string) { super("effect outcome uncertain; manual reconciliation required"); }
+  readonly effectKey: string;
+  constructor(effectKey: string) {
+    super("effect outcome uncertain; manual reconciliation required");
+    this.effectKey = effectKey;
+  }
 }
 
 /**
