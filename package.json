@@ -12,7 +12,7 @@
     "test:durable": "node --experimental-strip-types --test tests/durable.test.ts",
     "test:invocation": "node --experimental-strip-types --test tests/invocation.test.ts",
     "editor": "node --experimental-strip-types src/editor-server.ts",
-    "test:editor": "node --experimental-strip-types --test tests/editor.test.ts"
+    "test:editor": "node --experimental-strip-types --test tests/editor.test.ts tests/source-text.test.mjs"
   },
   "dependencies": {
     "@earendil-works/chord": "1.3.0",
