@@ -112,8 +112,9 @@ test("local browser viewer serves a versioned package without invoking the workf
       method: "POST", headers: { "content-type": "application/json", "x-workflow-editor": "1" },
       body: JSON.stringify({ type: "move", id: "ast_hook_1", x: 350, y: 120, revision: initial.revision }),
     });
-    assert.equal(changed.status, 200, await changed.text());
-    const moved = await changed.json() as { revision: number };
+    const changedBody = await changed.text();
+    assert.equal(changed.status, 200, changedBody);
+    const moved = JSON.parse(changedBody) as { revision: number };
     const saved = await fetch(base + "/api/action", {
       method: "POST", headers: { "content-type": "application/json", "x-workflow-editor": "1" },
       body: JSON.stringify({ type: "save", revision: moved.revision }),
