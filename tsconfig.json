@@ -6,7 +6,13 @@
     "strict": true,
     "noEmit": true,
     "skipLibCheck": true,
+    "allowImportingTsExtensions": true,
     "types": ["node"]
   },
-  "include": ["spikes/issue-1/**/*.ts"]
+  "include": [
+    "spikes/issue-1/**/*.ts",
+    "src/**/*.ts",
+    "tests/**/*.ts",
+    "fixtures/**/*.ts"
+  ]
 }
