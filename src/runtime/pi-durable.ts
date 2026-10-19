@@ -22,7 +22,7 @@ export type PinnedRunInput<I> = {
 
 export type TrustedWorkflow<I, S extends { phase: string }, R> = {
   /** Must refer to an installed native task implementation. */
-  task: Task<PinnedRunInput<I>, S, R>;
+  task: Task<PinnedRunInput<I>, S, R, object>;
   revision: WorkflowRevision;
   capabilities: readonly string[];
 };
