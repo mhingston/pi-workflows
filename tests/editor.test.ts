@@ -283,9 +283,9 @@ test("canvas rejects unmarked, unknown, overlapping and noncanonical edits", asy
     ...input, source: noCanvas, manifestJson: JSON.stringify({ ...original.manifest, sourceSha256: await sha256(noCanvas) }),
   });
   await assert.rejects(editCanvas(noCanvasWorkflow, { type: "add-step", kind: "hook", name: "x", x: 0, y: 0 }), /no editable region/);
-  const markerPair = "  // @pi-workflows:canvas-start\\n  // @pi-workflows:canvas-end\\n";
+  const markerPair = "  // @pi-workflows:canvas-start\n  // @pi-workflows:canvas-end\n";
   const outOfScope = input.source.replace(markerPair, "") +
-    "// @pi-workflows:canvas-start\\n// @pi-workflows:canvas-end\\n";
+    "// @pi-workflows:canvas-start\n// @pi-workflows:canvas-end\n";
   const wrongScope = await loadWorkflow({
     source: outOfScope,
     manifestJson: JSON.stringify({ ...original.manifest, sourceSha256: await sha256(outOfScope) }),
