@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -69,8 +69,15 @@ test("publishing pins exact bytes, dependency versions and implementation, with 
   inTemp(async directory => {
     const store = new FilePublicationStore(join(directory, "revisions"));
     const artifact = await fixture();
-    const first = await store.publish(artifact, binding);
+    // Independent store instances race to publish an identical revision. The
+    // final path is atomically installed only once and never contains partial JSON.
+    const publications = await Promise.all(Array.from({ length: 12 },
+      () => new FilePublicationStore(join(directory, "revisions")).publish(artifact, binding)));
+    const first = publications[0]!;
     assert.match(first.revisionId, /^[a-f0-9]{64}$/);
+    assert.ok(publications.every(item => item.revisionId === first.revisionId));
+    assert.deepEqual(await readdir(join(directory, "revisions")), [first.revisionId + ".json"],
+      "temporary publication files must be cleaned up");
     assert.equal((await store.publish(artifact, binding)).revisionId, first.revisionId);
     assert.equal((await store.get(first.revisionId)).artifact.source, artifact.source);
     assert.deepEqual((await store.get(first.revisionId)).binding, binding);
@@ -80,6 +87,30 @@ test("publishing pins exact bytes, dependency versions and implementation, with 
     await assert.rejects(store.publish(artifact, { ...binding, runtime: {
       ...provider, capabilities: ["agent"],
     } }), /Unsupported runtime capabilities/);
+
+    // A capability-gated code escape hatch requires support on BOTH selected
+    // components, not merely a valid code-executor descriptor.
+    const dynamicArtifact = await loadWorkflow({
+      source: artifact.source,
+      manifestJson: JSON.stringify({
+        ...artifact.manifest, requiredCapabilities: ["agent", "dynamic_code"],
+      }),
+    });
+    const dynamicBinding = { ...binding, runtime: {
+      ...provider, capabilities: ["agent", "dynamic_code"] as const,
+    } };
+    await assert.rejects(store.publish(dynamicArtifact, dynamicBinding),
+      /Dynamic code requires an explicitly selected code executor/);
+    const unsupportedExecutor = {
+      id: "sandbox", version: "1.0.0", implementationSha256: "b".repeat(64), capabilities: [] as const,
+    };
+    await assert.rejects(store.publish(dynamicArtifact, {
+      ...dynamicBinding, codeExecutor: unsupportedExecutor,
+    }), /Unsupported runtime capabilities: dynamic_code/);
+    const supported = await store.publish(dynamicArtifact, {
+      ...dynamicBinding, codeExecutor: { ...unsupportedExecutor, capabilities: ["dynamic_code"] as const },
+    });
+    assert.equal((await store.get(supported.revisionId)).binding.codeExecutor?.capabilities[0], "dynamic_code");
 
     // Publication of later source is a *new* revision, never a rewrite.
     const newerSource = artifact.source + "\n// revised\n";
@@ -110,6 +141,16 @@ test("published native runs retain provenance; mutable drafts and changed runtim
     assert.equal(result.status, "completed");
     if (result.status !== "completed") return;
     assert.equal(result.output, 6);
+
+    // Both paths must hash the normalized input actually persisted in the
+    // native task, independent of incoming JSON property insertion order.
+    const reversed = { requiresApproval: false, values: [1, 2] };
+    const byName = await service.run("dynamic_agents", reversed);
+    const byRevision = await service.runRevision(revisionId, reversed);
+    for (const completion of [byName, byRevision]) {
+      assert.equal(completion.status, "completed");
+      if (completion.status === "completed") assert.equal(completion.output, 6);
+    }
 
     const { registry } = await trustedFixture({ approve: async () => true });
     const ctx = BACKGROUND_CONTEXT;
