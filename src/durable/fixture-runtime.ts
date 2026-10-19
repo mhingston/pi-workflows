@@ -156,9 +156,16 @@ export function registerFixtureWorkflow(artifact: LoadedWorkflow, effect: Approv
               // point but before the receipt leaves an UNCERTAIN result, and we
               // deliberately DO NOT re-execute the effect on replay.
               await runtime.memo("approval-intent", effectKey, ctx);
-              const approved = await effect.approve(effectKey);
-              await runtime.memo("approval-receipt", approved, ctx);
-              return approved;
+              try {
+                const approved = await effect.approve(effectKey);
+                await runtime.memo("approval-receipt", approved, ctx);
+                return approved;
+              } catch {
+                // A rejected call does not prove the remote effect did not
+                // happen. Even receipt persistence can fail after an effect.
+                // Never classify this as a safely failed/retryable action.
+                throw new UncertainEffect(effectKey);
+              }
             },
           });
           if (cursor !== steps.length) throw new Error("not all child results were consumed");
