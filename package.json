@@ -8,7 +8,8 @@
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "smoke:durable": "node --experimental-strip-types spikes/issue-1/durable.ts",
-    "test:artifact": "node --experimental-strip-types --test tests/artifact.test.ts"
+    "test:artifact": "node --experimental-strip-types --test tests/artifact.test.ts",
+    "test:durable": "node --experimental-strip-types --test tests/durable.test.ts"
   },
   "dependencies": {
     "@earendil-works/chord": "1.3.0",
