@@ -31,6 +31,18 @@
         </div>
       </div>
       <footer>Drag nodes to save their layout. Dashed connections are illustrative only; no execution graph is inferred.</footer>
+      <section class="runtime" aria-label="Native runtime execution graph">
+        <div class="panel-title">
+          <strong>Native execution graph</strong>
+          <div class="run-controls">
+            <label for="run-id">Task / run ID</label>
+            <input id="run-id" type="number" step="1" min="1" placeholder="Native task ID">
+            <button id="inspect-run">Inspect</button>
+          </div>
+        </div>
+        <p id="run-message" role="status" aria-live="polite">Connect a native Pi Durable host to inspect a run. Static projection above is not a trace.</p>
+        <ul id="run-nodes" class="runtime-tree"></ul>
+      </section>
     </section>
     <aside aria-label="Properties and source">
       <section class="properties">
