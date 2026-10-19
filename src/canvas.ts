@@ -46,17 +46,37 @@ function supportedScope(source: string, start: number, end: number): boolean {
         node.parameters[1]!.name.text === "ports") {
       const body = node.body;
       const inside = start > body.getStart(file) && end < body.end;
-      const nested = body.statements.some(statement =>
-        statement.getStart(file) < start && statement.end > end);
+      // A preceding unbraced if/loop can consume the first managed step.
+      // Test *both* boundaries: containing the whole region is insufficient,
+      // since an if may consume only the first of several managed statements.
+      const crossesBoundary = body.statements.some(statement => {
+        const a = statement.getStart(file), b = statement.end;
+        return (a < start && b > start) || (a < end && b > end);
+      });
       const afterReturn = body.statements.some(statement =>
         ts.isReturnStatement(statement) && statement.getStart(file) < start);
-      if (inside && !nested && !afterReturn) found = true;
+      if (inside && !crossesBoundary && !afterReturn) found = true;
     }
     ts.forEachChild(node, visit);
   }
   visit(file);
   return found;
 }
+/**
+ * Check marker positions against the TypeScript lexer. A line matching the
+ * marker regex could otherwise be part of a block comment or template literal;
+ * those are not executable authoring regions.
+ */
+function standaloneLineComments(source: string): Set<number> {
+  const scanner = ts.createScanner(ts.ScriptTarget.Latest, false, ts.LanguageVariant.Standard, source);
+  const positions = new Set<number>();
+  let token: ts.SyntaxKind;
+  while ((token = scanner.scan()) !== ts.SyntaxKind.EndOfFileToken) {
+    if (token === ts.SyntaxKind.SingleLineCommentTrivia) positions.add(scanner.getTokenPos());
+  }
+  return positions;
+}
+
 export function readCanvas(source: string): CanvasRegion | null {
   const starts = [...source.matchAll(BEGIN)], ends = [...source.matchAll(FINISH)];
   if (!starts.length && !ends.length) return null;
@@ -64,6 +84,11 @@ export function readCanvas(source: string): CanvasRegion | null {
   const first = starts[0]!, last = ends[0]!;
   const start = (first.index ?? -1) + first[0].length, end = last.index ?? -1;
   if (start > end || first[1] !== last[1]) fail("misplaced or mismatched markers");
+  const singleLineComments = standaloneLineComments(source);
+  if (!singleLineComments.has((first.index ?? -1) + first[1]!.length) ||
+      !singleLineComments.has((last.index ?? -1) + last[1]!.length)) {
+    fail("markers must be actual standalone // comments, not block-comment or string contents");
+  }
   if (!supportedScope(source, start, end)) fail("markers must be at top level of async runWorkflow(input, ports), before return");
   const indent = first[1]!, eol = first[0].endsWith("\r\n") ? "\r\n" : "\n";
   const body = source.slice(start, end);
