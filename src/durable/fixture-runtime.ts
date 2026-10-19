@@ -41,8 +41,18 @@ export type ApprovalEffect =
   | { applyIdempotently(idempotencyKey: string, request: ApprovalRequest): Promise<ProviderApprovalResult>;
       approve?: never };
 
-/** Test-only child execution probe, not a production hook or tracing API. */
-export type FixtureProbe = { childExecuted?: (taskId: number) => Promise<void> };
+/** Preserve the provider's verified disposition in the same durable memo as its decision. */
+type ApprovalReceipt = boolean | {
+  approved: boolean;
+  disposition: "applied" | "already_applied";
+};
+
+/** Test-only fault injection, not a production hook or tracing API. */
+export type FixtureProbe = {
+  childExecuted?: (taskId: number) => Promise<void>;
+  /** Runs only after the native approval memo has durably committed. */
+  afterApprovalReceipt?: () => Promise<void>;
+};
 
 export interface PublishedRunProvenance {
   readonly revisionId: string;
@@ -205,8 +215,18 @@ export function registerFixtureWorkflow(
             // hooks require a real effect policy in a future adapter.
             hook: async () => {},
             approve: async reason => {
-              const receipt = await runtime.memo<boolean>("approval-receipt", ctx);
-              if (receipt !== undefined) return receipt;
+              const receipt = await runtime.memo<ApprovalReceipt>("approval-receipt", ctx);
+              if (receipt !== undefined) {
+                // Keep accepting boolean receipts written by the original
+                // no-provider fixture; they carry no disposition.
+                if (typeof receipt === "boolean") return receipt;
+                if (!receipt || typeof receipt.approved !== "boolean" ||
+                    (receipt.disposition !== "applied" && receipt.disposition !== "already_applied")) {
+                  throw new UncertainEffect(effectKey);
+                }
+                approvalDisposition = receipt.disposition;
+                return receipt.approved;
+              }
               const intent = await runtime.memo<string>("approval-intent", ctx);
               if (intent !== undefined && intent !== effectKey) throw new UncertainEffect(effectKey);
               const idempotent = "applyIdempotently" in effect && !!effect.applyIdempotently;
@@ -221,7 +241,9 @@ export function registerFixtureWorkflow(
                     reason,
                     inputSha256: await sha256(JSON.stringify(task.input.input)),
                   };
-                  const response = await effect.applyIdempotently(effectKey, request);
+                  // The external port can mutate its argument. Validate against
+                  // the independent expected snapshot, never the object passed in.
+                  const response = await effect.applyIdempotently(effectKey, { ...request });
                   // Never accept a status without an exact, authoritative receipt
                   // for the requested operation. Unknown/conflicting/malformed
                   // provider responses remain ambiguous.
@@ -236,7 +258,11 @@ export function registerFixtureWorkflow(
                 } else {
                   approved = await effect.approve(effectKey);
                 }
-                await runtime.memo("approval-receipt", approved, ctx);
+                const durableReceipt: ApprovalReceipt = approvalDisposition === undefined
+                  ? approved
+                  : { approved, disposition: approvalDisposition };
+                await runtime.memo("approval-receipt", durableReceipt, ctx);
+                await probe?.afterApprovalReceipt?.();
                 return approved;
               } catch {
                 // A timeout or failed receipt write cannot prove that the
