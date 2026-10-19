@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { TaskId } from "@earendil-works/pi-durable";
 import { createWorkflowInvocationService } from "../src/invocation.ts";
 import { parseWorkflowCommand } from "../src/command.ts";
 import { registerWorkflowExtension } from "../src/pi-extension.ts";
@@ -82,7 +83,7 @@ test("command and model tool delegate to the same service and persist real nativ
       { models: createModels(), registry }, BACKGROUND_CONTEXT);
     try {
       for (const id of [fromCommand.runId, fromModel.runId]) {
-        const record = await harness.getTask(id, BACKGROUND_CONTEXT);
+        const record = await harness.getTask(id as TaskId<unknown>, BACKGROUND_CONTEXT);
         assert.equal(record?.state.status, "terminal");
       }
     } finally { await harness.close(BACKGROUND_CONTEXT); }
