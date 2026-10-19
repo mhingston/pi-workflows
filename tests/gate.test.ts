@@ -108,8 +108,9 @@ test("release gate: same package -> offline viewer/no-op save -> Pi command & to
       assert.deepEqual(view.graph.edges, [], "dynamic tasks must not invent executable static edges");
       assert.deepEqual(view.files, initial);
       const saved = await post(base, view.revision, "save");
-      assert.equal(saved.status, 200, await saved.text());
-      view = await saved.json() as State;
+      const savedText = await saved.text();
+      assert.equal(saved.status, 200, savedText);
+      view = JSON.parse(savedText) as State;
       assert.equal(view.dirty, false);
       assert.equal(await readFile(join(packageDir, "workflow.ts"), "utf8"), initial.source);
       assert.equal(await readFile(join(packageDir, "workflow.json"), "utf8"), initial.manifestJson);
@@ -120,11 +121,13 @@ test("release gate: same package -> offline viewer/no-op save -> Pi command & to
       assert.throws(() => refuseStructuralEdit(before, { remove: dynamic.id }), /unsafe visual edit/);
 
       const movedResponse = await post(base, view.revision, "move", { id: dynamic.id, x: 432, y: 210 });
-      assert.equal(movedResponse.status, 200, await movedResponse.text());
-      view = await movedResponse.json() as State;
+      const movedResponseText = await movedResponse.text();
+      assert.equal(movedResponse.status, 200, movedResponseText);
+      view = JSON.parse(movedResponseText) as State;
       const moveSave = await post(base, view.revision, "save");
-      assert.equal(moveSave.status, 200, await moveSave.text());
-      view = await moveSave.json() as State;
+      const moveSaveText = await moveSave.text();
+      assert.equal(moveSave.status, 200, moveSaveText);
+      view = JSON.parse(moveSaveText) as State;
       const roundTrip = await loadWorkflow({
         source: await readFile(join(packageDir, "workflow.ts"), "utf8"),
         manifestJson: await readFile(join(packageDir, "workflow.json"), "utf8"),
