@@ -30,6 +30,8 @@ export type ExecutionGraph = {
   readonly conversationId: number;
   readonly nodes: readonly ExecutionNode[];
   readonly edges: readonly { readonly from: number; readonly to: number }[];
+  /** False for older or faulted terminal outcomes lacking a durable child-ID receipt. */
+  readonly hierarchyComplete: boolean;
   /** Live statuses are snapshots; terminal children come from durable task records. */
   readonly provenance: "pi-durable-native";
 };
@@ -55,6 +57,7 @@ export async function captureRunGraph(
   }
 
   const ids = new Set<number>([runId]);
+  let hierarchyComplete = true;
   const checkpoint = root.state.status === "pending" || root.state.status === "running" ||
     root.state.status === "waiting" ? root.state.checkpoint as unknown as RunState : null;
   if (checkpoint?.phase === "collect") {
@@ -62,8 +65,16 @@ export async function captureRunGraph(
   }
   if (root.state.status === "terminal" || root.state.status === "completing") {
     const outcome = root.state.outcome;
-    if (outcome.status === "completed") {
-      for (const step of outcome.result.steps) ids.add(step.taskId);
+    // Terminal checkpoints disappear from Pi Durable's live graph. The trusted
+    // fixture persists direct child identities even for native failure/abort.
+    // Legacy or runtime-faulted records might not have that receipt.
+    const receipt = "result" in outcome ? outcome.result : undefined;
+    if (receipt?.status === "unsuccessful") {
+      for (const id of receipt.childTaskIds) ids.add(id);
+    } else if (receipt?.status === "completed" || receipt?.status === "needs_reconciliation") {
+      for (const step of receipt.steps) ids.add(step.taskId);
+    } else {
+      hierarchyComplete = false;
     }
   }
 
@@ -80,7 +91,7 @@ export async function captureRunGraph(
   const nodes: ExecutionNode[] = [];
   for (const id of [...ids].sort((a, b) => a - b)) {
     const record = id === runId ? root : await harness.getTask(id as TaskId, ctx);
-    if (!record) continue; // Deleted storage record, not a fabricated live state.
+    if (!record) { hierarchyComplete = false; continue; } // Do not invent deleted records.
     if (id !== runId && (record.owner === undefined || !ids.has(Number(record.owner)))) continue;
     const live = graph.tasks[String(id)];
     const state = record.state;
@@ -113,6 +124,7 @@ export async function captureRunGraph(
     nodes,
     edges: nodes.flatMap(node => node.parentTaskId !== undefined && present.has(node.parentTaskId)
       ? [{ from: node.parentTaskId, to: node.taskId }] : []),
+    hierarchyComplete,
     provenance: "pi-durable-native",
   };
 }
