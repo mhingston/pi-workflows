@@ -11,6 +11,10 @@ function message(text, error = false) {
 }
 async function api(type, fields = {}) {
   if (!state) return;
+  if (codeDraft && type !== "code" && type !== "reload") {
+    message("Apply or discard your code-pane draft before changing graph properties or layout.", true);
+    return;
+  }
   try {
     const response = await fetch("/api/action", {
       method: "POST",
@@ -104,6 +108,10 @@ function renderNodes() {
     });
     el.addEventListener("pointerdown", event => {
       if (event.button !== 0) return;
+      if (codeDraft) {
+        message("Apply your code-pane draft before dragging nodes.", true);
+        return;
+      }
       select(node.id);
       dragging = { id: node.id, x: event.clientX, y: event.clientY, origin: { ...positions.get(node.id) } };
       el.setPointerCapture(event.pointerId);
@@ -164,6 +172,7 @@ function inspect() {
   inspector.append(button);
 }
 function downloads() {
+  if (codeDraft) { message("Apply your code-pane draft before exporting.", true); return; }
   const old = $("downloads");
   if (old) { old.remove(); return; }
   const panel = document.createElement("div");
