@@ -31,3 +31,5 @@ jobs:
         run: npm run typecheck
       - name: Round-trip, integrity and trusted semantic fixture tests
         run: npm run test:artifact
+      - name: Native Pi Durable restart and side-effect integration tests
+        run: npm run test:durable
