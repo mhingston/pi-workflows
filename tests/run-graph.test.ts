@@ -23,7 +23,7 @@ test("native parent and child IDs survive a persisted wait, reopen, and terminal
   const { Run, registry, input, artifact } = await trustedFixture({
     approve: async () => true,
   });
-  const open = () => Harness.open(awaitStorage(), { models: createModels(), registry }, ctx);
+  const open = async () => Harness.open(await awaitStorage(), { models: createModels(), registry }, ctx);
   const awaitStorage = () => openNodeSqliteStorage(join(dir, "runs.sqlite"));
   let harness = await open();
   try {
