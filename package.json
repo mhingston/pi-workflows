@@ -9,17 +9,18 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "smoke:durable": "node --experimental-strip-types spikes/issue-1/durable.ts",
     "test:artifact": "node --experimental-strip-types --test tests/artifact.test.ts",
-    "test:durable": "node --experimental-strip-types --test tests/durable.test.ts"
+    "test:durable": "node --experimental-strip-types --test tests/durable.test.ts",
+    "test:invocation": "node --experimental-strip-types --test tests/invocation.test.ts"
   },
   "dependencies": {
     "@earendil-works/chord": "1.3.0",
     "@earendil-works/pi-ai": "1.3.0",
     "@earendil-works/pi-coding-agent": "1.3.0",
-    "@earendil-works/pi-durable": "1.3.0"
+    "@earendil-works/pi-durable": "1.3.0",
+    "ajv": "8.17.1"
   },
   "devDependencies": {
     "@types/node": "22.19.19",
-    "typescript": "5.9.3",
-    "ajv": "8.17.1"
+    "typescript": "5.9.3"
   }
 }
