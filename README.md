@@ -20,6 +20,8 @@ See [architecture handoff](docs/HANDOFF.md), [artifact contract](docs/artifact-f
 
 **Browser editor (issue #5):** run `npm run editor -- --workflow ./fixtures/complex` and open `http://localhost:4175`. Drag nodes, inspect/edit known literal call names, or edit arbitrary source in the code pane; save only after validation. Unknown code is never reconstructed from the graph. See [editor safety and limitations](docs/visual-editor.md).
 
+**Provider negotiation and immutable publishing (issue #7):** the native Pi Durable backend is selected by explicit, fail-closed capabilities; trusted source, installed dependencies and adapter implementation are pinned to a content-addressed published revision. Regular Pi remains an entry point, not a second durable runtime. See [provider contracts, publishing and limitations](docs/provider-publishing.md).
+
 **Integration gate (issue #6):** one version-pinned source package is projected and no-op saved in the editor, invoked via both Pi entry points, then verified against native Pi Durable records and restart/ambiguous-effect tests. See [reproducible integration demo, evidence and GO/NO-GO](docs/integration-gate.md).
 
 ## Verification
@@ -34,6 +36,7 @@ npm run test:durable
 npm run test:invocation
 npm run test:editor
 npm run test:gate
+npm run test:providers
 ```
 
 This project is independent of the similarly named
