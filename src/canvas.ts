@@ -1,5 +1,6 @@
 /** Source-first, lossless linear canvas authoring; no TypeScript execution. */
 import { randomUUID } from "node:crypto";
+import ts from "typescript";
 import { ArtifactError, loadWorkflow, sha256, type LoadedWorkflow, type WorkflowLayout } from "./artifact.ts";
 
 export type CanvasKind = "hook" | "agent" | "approval";
@@ -28,6 +29,34 @@ function statement(type: CanvasKind, name: string): string {
 function encoded(s: Pick<CanvasStep, "id" | "type" | "name">, indent: string, eol: string): string {
   return indent + "// @pi-workflows:step " + s.id + eol + indent + statement(s.type, s.name) + eol;
 }
+/**
+ * The small generated statement catalog assumes a top-level region inside an
+ * async runWorkflow(input, ports) declaration. Never insert into a nested
+ * branch, a different scope, or after an unconditional top-level return.
+ */
+function supportedScope(source: string, start: number, end: number): boolean {
+  const file = ts.createSourceFile("workflow.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  let found = false;
+  function visit(node: ts.Node): void {
+    if (ts.isFunctionDeclaration(node) && node.name?.text === "runWorkflow" &&
+        node.body && node.modifiers?.some(modifier => modifier.kind === ts.SyntaxKind.AsyncKeyword) &&
+        node.parameters.length >= 2 && ts.isIdentifier(node.parameters[0]!.name) &&
+        node.parameters[0]!.name.text === "input" &&
+        ts.isIdentifier(node.parameters[1]!.name) &&
+        node.parameters[1]!.name.text === "ports") {
+      const body = node.body;
+      const inside = start > body.getStart(file) && end < body.end;
+      const nested = body.statements.some(statement =>
+        statement.getStart(file) < start && statement.end > end);
+      const afterReturn = body.statements.some(statement =>
+        ts.isReturnStatement(statement) && statement.getStart(file) < start);
+      if (inside && !nested && !afterReturn) found = true;
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(file);
+  return found;
+}
 export function readCanvas(source: string): CanvasRegion | null {
   const starts = [...source.matchAll(BEGIN)], ends = [...source.matchAll(FINISH)];
   if (!starts.length && !ends.length) return null;
@@ -35,6 +64,7 @@ export function readCanvas(source: string): CanvasRegion | null {
   const first = starts[0]!, last = ends[0]!;
   const start = (first.index ?? -1) + first[0].length, end = last.index ?? -1;
   if (start > end || first[1] !== last[1]) fail("misplaced or mismatched markers");
+  if (!supportedScope(source, start, end)) fail("markers must be at top level of async runWorkflow(input, ports), before return");
   const indent = first[1]!, eol = first[0].endsWith("\r\n") ? "\r\n" : "\n";
   const body = source.slice(start, end);
   const pattern = new RegExp("^" + indent + "// @pi-workflows:step (canvas_[a-f0-9]{16})\\r?\\n" +
