@@ -42,7 +42,7 @@ Source anchors store \`start\`/\`end\` as **UTF-16 JavaScript string indices** o
 ## Versioning and immutability
 
 - \`schemaVersion: 1\` describes the **format**, separate from workflow semver. New major format schemas need explicit migrations; v1 refuses unknown versions instead of coercing them.
-- Workflow revisions should ultimately pin the actual **source SHA-256**, dependencies and provider implementation. \`WorkflowRunProvenance\` is a type contract, *not yet* a publishing service or immutable registry ([issue #7](https://github.com/mhingston/pi-workflows/issues/7)).
+- Workflow publications now pin the exact **source bytes**, manifest, resolved dependency versions and executing adapter implementation in a verified content-addressed local store ([issue #7](https://github.com/mhingston/pi-workflows/issues/7)). See [provider publishing](provider-publishing.md). Native runs persist publication, input and configuration fingerprints.
 - Saved \`layout.json\` positions do not change execution. If the source changes, stale layout hashes/anchors deliberately force a reconciliation instead of silently replacing executable code.
 - Repeated import/export preserves source and metadata byte-for-byte. The source is not normalized/pretty-printed.
 

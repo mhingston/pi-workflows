@@ -12,7 +12,11 @@ import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { Harness } from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
-import { loadWorkflow, type LoadedWorkflow } from "./artifact.ts";
+import { loadWorkflow, sha256, type LoadedWorkflow } from "./artifact.ts";
+import { FilePublicationStore, type PublishedWorkflow } from "./publication.ts";
+import {
+  ProviderRegistry, type Capability, type ProviderDescriptor, type WorkflowRuntime,
+} from "./providers.ts";
 import { FIXTURE_CAPABILITIES, registerFixtureWorkflow, type ApprovalEffect } from "./durable/fixture-runtime.ts";
 import type { WorkflowInput } from "../fixtures/complex/workflow.ts";
 
@@ -41,13 +45,20 @@ type RunOptions = {
 };
 export interface WorkflowInvocationService {
   list(): Promise<WorkflowSummary[]>;
+  /** Publish the trusted package and return its immutable revision ID. */
+  publish(name: string): Promise<string>;
   run(name: string, input: unknown, options?: RunOptions): Promise<WorkflowInvocationResult>;
+  /** Run a particular content-addressed revision, never the current draft. */
+  runRevision(revisionId: string, input: unknown, options?: RunOptions): Promise<WorkflowInvocationResult>;
 }
 export interface InvocationConfig {
   cwd: string;
   home?: string;
   dbPath?: string;
-  capabilities?: readonly string[];
+  capabilities?: readonly Capability[];
+  /** Only pi_durable is registered for execution in this slice. */
+  runtimeId?: string;
+  publicationDir?: string;
   /** Test-only injected effect. Production uses an approved no-op fixture port. */
   fixtureEffect?: ApprovalEffect;
   /** Do not inspect project packages without Pi's project-trust grant. */
@@ -101,7 +112,11 @@ function unique(entries: CatalogEntry[]): CatalogEntry[] {
 /** Keep one serialized SQLite harness owner per service; no separate scheduler. */
 export function createWorkflowInvocationService(config: InvocationConfig): WorkflowInvocationService {
   const home = config.home ?? homedir();
-  const capabilities = config.capabilities ?? FIXTURE_CAPABILITIES;
+  const capabilities = config.capabilities ??
+    [...FIXTURE_CAPABILITIES, "native_child_tasks", "timers", "durable_replay",
+      "provider_pi_durable_native_tasks"] as readonly Capability[];
+  const publications = new FilePublicationStore(config.publicationDir ??
+    join(config.cwd, ".pi", "workflow-publications"));
   const dbPath = config.dbPath ?? join(config.cwd, ".pi", "workflow-runs.sqlite");
   let tail: Promise<unknown> = Promise.resolve();
 
@@ -133,7 +148,98 @@ export function createWorkflowInvocationService(config: InvocationConfig): Workf
     }));
   };
 
-  async function invoke(name: string, input: unknown, options: RunOptions): Promise<WorkflowInvocationResult> {
+  async function resolvedBinding(): Promise<{ descriptor: ProviderDescriptor; dependencies: Record<string, string> }> {
+    // Pin the adapter source *and* installed runtime version, not just a
+    // user-declared package range. This bounded adapter uses one known package.
+    const [implementation, adapterSource, dependencyJson] = await Promise.all([
+      readFile(new URL("./durable/fixture-runtime.ts", import.meta.url), "utf8"),
+      readFile(new URL("./invocation.ts", import.meta.url), "utf8"),
+      readFile(new URL("../node_modules/@earendil-works/pi-durable/package.json", import.meta.url), "utf8"),
+    ]);
+    const installed = JSON.parse(dependencyJson) as { version?: unknown };
+    if (typeof installed.version !== "string") {
+      throw new WorkflowInvocationError("dependency_lock", "Installed Pi Durable version is unknown.");
+    }
+    const descriptor: ProviderDescriptor = {
+      id: "pi_durable", version: installed.version,
+      implementationSha256: await sha256(implementation + "\\0" + adapterSource),
+      capabilities,
+    };
+    return { descriptor, dependencies: { "@earendil-works/pi-durable": installed.version } };
+  }
+
+  function registeredRuntime(descriptor: ProviderDescriptor): WorkflowRuntime<WorkflowInvocationResult> {
+    const effect: ApprovalEffect = config.fixtureEffect ?? { approve: async () => true };
+    return {
+      descriptor,
+      async start(request) {
+        const publication = request.publication;
+        // File contents are rechecked immediately before starting any task.
+        const current = await publications.get(publication.revisionId);
+        if (!isDeepStrictEqual(current.binding.runtime, descriptor)) {
+          throw new WorkflowInvocationError("runtime_drift", "Published runtime implementation changed; refusing to run.");
+        }
+        const expected = {
+          revisionId: current.revisionId,
+          runtime: current.binding.runtime,
+          dependencies: current.binding.resolvedDependencies,
+          configurationSha256: await sha256(JSON.stringify({
+            effectPolicy: "intent_receipt_manual_reconciliation",
+            approvalPort: config.fixtureEffect ? "injected_fixture" : "trusted_fixture_noop",
+          })),
+        };
+        const fixture = registerFixtureWorkflow(current.artifact, effect, expected);
+        // The fixture persists this exact field order when creating RunInput.
+        // Never hash caller object insertion order: both Pi invocation paths may
+        // receive equivalent JSON with different property ordering.
+        const typed = request.input as WorkflowInput;
+        const persistedInput: WorkflowInput = {
+          values: typed.values, requiresApproval: typed.requiresApproval,
+        };
+        const pin = { ...expected, inputSha256: await sha256(JSON.stringify(persistedInput)) };
+        await mkdir(dirname(dbPath), { recursive: true });
+        const ctx = BACKGROUND_CONTEXT;
+        const harness = await Harness.open(await openNodeSqliteStorage(dbPath),
+          { models: createModels(), registry: fixture.registry }, ctx);
+        try {
+          const root = await harness.root(ctx);
+          const id = await root.commit(tx => tx.createTask(fixture.Run,
+            fixture.input(typed.values, typed.requiresApproval,
+              request.interactiveApproval === "approved" ? "approved" : undefined, pin),
+            { ownership: { kind: "conversation" } }), ctx);
+          const settled = await harness.waitForTask(id, ctx);
+          const outcome = settled.state.outcome;
+          if (outcome.status === "completed") {
+            if (outcome.result.status === "needs_reconciliation") {
+              return { status: "needs_reconciliation", runId: Number(id), effectKey: outcome.result.effectKey };
+            }
+            return { status: "completed", runId: Number(id), output: outcome.result.output };
+          }
+          return { status: "failed", runId: Number(id),
+            error: "Native workflow task did not complete successfully." };
+        } finally {
+          await harness.close(ctx);
+        }
+      },
+    };
+  }
+
+  async function selectRuntime(artifact: LoadedWorkflow) {
+    const { descriptor, dependencies } = await resolvedBinding();
+    const registry = new ProviderRegistry();
+    registry.registerRuntime(registeredRuntime(descriptor));
+    const runtime = registry.runtime(config.runtimeId ?? "pi_durable", artifact.manifest.requiredCapabilities) as WorkflowRuntime<WorkflowInvocationResult>;
+    return { runtime, dependencies };
+  }
+
+  async function publishArtifact(artifact: LoadedWorkflow) {
+    const { runtime, dependencies } = await selectRuntime(artifact);
+    return publications.publish(artifact, {
+      runtime: runtime.descriptor, resolvedDependencies: dependencies,
+    });
+  }
+
+  async function trustedEntry(name: string): Promise<LoadedWorkflow> {
     const { entries, trusted } = await catalog();
     const entry = entries.find(entry => entry.name === name);
     if (!entry) throw new WorkflowInvocationError("unknown_workflow", 'Unknown workflow "' + name + '".');
@@ -141,55 +247,62 @@ export function createWorkflowInvocationService(config: InvocationConfig): Workf
       throw new WorkflowInvocationError("untrusted_workflow",
         'Workflow "' + name + '" is untrusted, invalid or does not match its registered revision.');
     }
-    const missing = entry.artifact.manifest.requiredCapabilities.filter(cap => !capabilities.includes(cap));
-    if (missing.length) {
-      throw new WorkflowInvocationError("unsupported_capabilities", "Unsupported runtime capabilities: " + missing.join(", "));
+    return entry.artifact;
+  }
+
+  async function execute(publication: PublishedWorkflow, input: unknown,
+    options: RunOptions): Promise<WorkflowInvocationResult> {
+    const trusted = await packageFrom(packaged);
+    if (!allowed({ name: publication.artifact.manifest.id, artifact: publication.artifact, path: "" }, trusted)) {
+      throw new WorkflowInvocationError("untrusted_workflow",
+        "Published source does not match the registered trusted module.");
     }
-    const validate = new Ajv2020({ strict: true, allErrors: true }).compile(entry.artifact.manifest.inputSchema);
+    const { runtime, dependencies } = await selectRuntime(publication.artifact);
+    if (!isDeepStrictEqual(publication.binding.runtime, runtime.descriptor) ||
+        !isDeepStrictEqual(publication.binding.resolvedDependencies, dependencies)) {
+      throw new WorkflowInvocationError("runtime_drift",
+        "Published dependencies or runtime implementation changed; refusing to run.");
+    }
+    const validate = new Ajv2020({ strict: true, allErrors: true }).compile(publication.artifact.manifest.inputSchema);
     if (!validate(input)) {
-      // Schema paths only: never echo supplied values (possibly sensitive).
       throw new WorkflowInvocationError("invalid_input",
         "Invalid workflow input: " + (validate.errors ?? []).map(e => e.instancePath || e.schemaPath).join(", "));
     }
-    // The trusted schema provides the type-level contract, not a runtime TS import of source.
     const typed = input as WorkflowInput;
-    if (typed.requiresApproval) {
-      if (!options.authorize || !await options.authorize(name)) {
-        throw new WorkflowInvocationError("approval_required", "Workflow action was not explicitly approved.");
-      }
+    if (typed.requiresApproval && (!options.authorize ||
+        !await options.authorize(publication.artifact.manifest.id))) {
+      throw new WorkflowInvocationError("approval_required", "Workflow action was not explicitly approved.");
     }
-    const effect: ApprovalEffect = config.fixtureEffect ?? { approve: async () => true };
-    const fixture = registerFixtureWorkflow(entry.artifact, effect);
-    await mkdir(dirname(dbPath), { recursive: true });
-    const ctx = BACKGROUND_CONTEXT;
-    const harness = await Harness.open(await openNodeSqliteStorage(dbPath),
-      { models: createModels(), registry: fixture.registry }, ctx);
-    try {
-      const root = await harness.root(ctx);
-      const id = await root.commit(tx => tx.createTask(fixture.Run,
-        fixture.input(typed.values, typed.requiresApproval, typed.requiresApproval ? "approved" : undefined), { ownership: { kind: "conversation" } }), ctx);
-      const settled = await harness.waitForTask(id, ctx);
-      const outcome = settled.state.outcome;
-      if (outcome.status === "completed") {
-        if (outcome.result.status === "needs_reconciliation") {
-          return { status: "needs_reconciliation", runId: Number(id), effectKey: outcome.result.effectKey };
-        }
-        return { status: "completed", runId: Number(id), output: outcome.result.output };
-      }
-      // Never return arbitrary task errors or input content to the model.
-      return { status: "failed", runId: Number(id), error: "Native workflow task did not complete successfully." };
-    } finally {
-      await harness.close(ctx);
-    }
+    return runtime.start({
+      publication, input: typed,
+      interactiveApproval: typed.requiresApproval ? "approved" : "not_required",
+    });
+  }
+
+  async function invoke(name: string, input: unknown, options: RunOptions): Promise<WorkflowInvocationResult> {
+    const artifact = await trustedEntry(name);
+    // Negotiation/publishing precedes execution; rejecting inputs/approval also
+    // prevents native task creation. Publications are immutable and reverified.
+    const publication = await publishArtifact(artifact);
+    return execute(publication, input, options);
+  }
+
+  async function invokeRevision(revisionId: string, input: unknown,
+    options: RunOptions): Promise<WorkflowInvocationResult> {
+    return execute(await publications.get(revisionId), input, options);
+  }
+
+  function serialized<T>(work: () => Promise<T>): Promise<T> {
+    const scheduled = tail.then(work);
+    tail = scheduled.then(() => undefined, () => undefined);
+    return scheduled;
   }
 
   return {
     list,
-    run(name, input, options = {}) {
-      // Both entry points share the same queue and native SQLite store.
-      const work = tail.then(() => invoke(name, input, options));
-      tail = work.then(() => undefined, () => undefined);
-      return work;
-    },
+    publish: name => serialized(async () => (await publishArtifact(await trustedEntry(name))).revisionId),
+    run: (name, input, options = {}) => serialized(() => invoke(name, input, options)),
+    runRevision: (revisionId, input, options = {}) =>
+      serialized(() => invokeRevision(revisionId, input, options)),
   };
 }

@@ -35,6 +35,8 @@ jobs:
           npm run test:editor
       - name: Native durable recovery including SIGKILL effect
         run: npm run test:durable
+      - name: Provider contracts and immutable publishing
+        run: npm run test:providers
       - name: Both Pi invocation adapters
         run: npm run test:invocation
       - name: End-to-end release gate

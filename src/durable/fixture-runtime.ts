@@ -7,7 +7,9 @@
  * collect phase with ports backed by durable child outcomes.
  */
 import { createRegistry, defineExtension, defineTask, type TaskId } from "@earendil-works/pi-durable";
-import type { LoadedWorkflow } from "../artifact.ts";
+import { sha256, type LoadedWorkflow } from "../artifact.ts";
+import { isDeepStrictEqual } from "node:util";
+import type { ProviderDescriptor } from "../providers.ts";
 import { runWorkflow, type WorkflowInput } from "../../fixtures/complex/workflow.ts";
 
 export const FIXTURE_CAPABILITIES = ["agent", "hooks", "approval", "dynamic_tasks"] as const;
@@ -25,6 +27,14 @@ export interface ApprovalEffect {
   approve(idempotencyKey: string): Promise<boolean>;
 }
 
+export interface PublishedRunProvenance {
+  readonly revisionId: string;
+  readonly runtime: ProviderDescriptor;
+  readonly dependencies: Readonly<Record<string, string>>;
+  readonly configurationSha256: string;
+  readonly inputSha256: string;
+}
+
 export type RunInput = {
   workflowId: string;
   workflowVersion: string;
@@ -32,6 +42,8 @@ export type RunInput = {
   /** UI consent is recorded separately from the external effect receipt. */
   interactiveApproval: "approved" | "not_required" | "not_recorded";
   input: WorkflowInput;
+  /** Exact immutable revision + executing implementation; absent only in legacy direct tests. */
+  publication?: PublishedRunProvenance;
 };
 
 export type RunState =
@@ -54,7 +66,18 @@ class UncertainEffect extends Error {
  * task name/version. A persisted run's source fingerprint is checked again in
  * the collect phase, so a changed file cannot quietly resume old tasks.
  */
-export function registerFixtureWorkflow(artifact: LoadedWorkflow, effect: ApprovalEffect) {
+export function registerFixtureWorkflow(
+  artifact: LoadedWorkflow,
+  effect: ApprovalEffect,
+  published?: Omit<PublishedRunProvenance, "inputSha256">,
+) {
+  async function matchingPublication(input: RunInput): Promise<boolean> {
+    if (!published) return input.publication === undefined;
+    if (!input.publication) return false;
+    const { inputSha256, ...recorded } = input.publication;
+    return isDeepStrictEqual(recorded, published) &&
+      inputSha256 === await sha256(JSON.stringify(input.input));
+  }
   const manifest = artifact.manifest;
   if (manifest.id !== "dynamic_agents" || manifest.entrypoint !== "workflow.ts") {
     throw new Error("unsupported workflow: only trusted dynamic_agents is registered");
@@ -91,7 +114,8 @@ export function registerFixtureWorkflow(artifact: LoadedWorkflow, effect: Approv
       dispatch: async (task, runtime, ctx) => {
         if (task.input.workflowId !== manifest.id ||
             task.input.workflowVersion !== manifest.version ||
-            task.input.sourceSha256 !== manifest.sourceSha256) {
+            task.input.sourceSha256 !== manifest.sourceSha256 ||
+            !await matchingPublication(task.input)) {
           await runtime.commit(() => ({
             status: "terminal", outcome: { status: "failed", error: { message: "workflow revision mismatch" } },
           }), ctx);
@@ -115,7 +139,8 @@ export function registerFixtureWorkflow(artifact: LoadedWorkflow, effect: Approv
       },
       collect: async (task, runtime, ctx) => {
         if (task.input.sourceSha256 !== manifest.sourceSha256 ||
-            task.input.workflowVersion !== manifest.version) {
+            task.input.workflowVersion !== manifest.version ||
+            !await matchingPublication(task.input)) {
           await runtime.commit(() => ({
             status: "terminal", outcome: { status: "failed", error: { message: "workflow revision changed while running" } },
           }), ctx);
@@ -204,14 +229,19 @@ export function registerFixtureWorkflow(artifact: LoadedWorkflow, effect: Approv
 
   const registry = createRegistry();
   registry.install(defineExtension({ name: "pi-workflows.fixture", tasks: [Child, Run] }));
-  function input(values: number[], requiresApproval: boolean, interactiveApproval?: "approved"): RunInput {
+  function input(
+    values: number[], requiresApproval: boolean, interactiveApproval?: "approved",
+    publication?: PublishedRunProvenance,
+  ): RunInput {
     if (!Array.isArray(values) || !values.every(Number.isFinite) || typeof requiresApproval !== "boolean") {
       throw new Error("invalid fixture workflow input");
     }
     if (!requiresApproval && interactiveApproval === "approved") {
       throw new Error("cannot record consent for a workflow not requiring approval");
     }
+    if (published && !publication) throw new Error("published run requires immutable provenance");
     return {
+      ...(publication ? { publication } : {}),
       workflowId: manifest.id,
       workflowVersion: manifest.version,
       sourceSha256: manifest.sourceSha256,
