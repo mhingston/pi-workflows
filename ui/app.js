@@ -350,6 +350,24 @@ function inspect() {
   button.addEventListener("click", () => api("property", { id: node.id, value: input.value }));
   inspector.append(button);
   if (node.canvasKind) {
+    const branch = state.graph.nodes.find(n => n.canvasBranch);
+    if (branch) {
+      // Keyboard/touch equivalent of dragging a TRUE/FALSE port onto a step.
+      const armLabel = text("label", "Connect this step to IF arm");
+      const armChoice = document.createElement("select");
+      for (const [value, name] of [["then", "TRUE"], ["else", "FALSE"]]) {
+        const option = text("option", name);
+        option.value = value;
+        armChoice.append(option);
+      }
+      armChoice.value = node.lane === "else" ? "else" : "then";
+      armLabel.append(armChoice);
+      inspector.append(armLabel);
+      const connect = text("button", "Connect to selected IF arm");
+      connect.addEventListener("click", () =>
+        api("connect-branch", { from: branch.id, to: node.id, arm: armChoice.value }));
+      inspector.append(connect);
+    }
     if (node.lane !== "top") {
       const leave = text("button", "Disconnect from branch (move after IF)");
       leave.addEventListener("click", () => api("disconnect-branch", { id: node.id }));
