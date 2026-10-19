@@ -1,48 +1,88 @@
 /**
- * Browsers normalize textarea line endings to LF. Keep the authoritative
- * source bytes instead of treating the displayed value as source text.
+ * Textareas display CRLF and CR as LF; workflow.ts source bytes remain
+ * authoritative. Never use the textarea's normalized value as source directly.
  */
 export function displaySource(source) {
   return source.replace(/\r\n?|\n/g, "\n");
 }
 
-/** Return the UTF-16 offset in the original source for a normalized boundary. */
-function sourceOffset(source, normalizedIndex) {
-  let normalized = 0;
-  for (let offset = 0; offset < source.length; offset++) {
-    if (normalized === normalizedIndex) return offset;
-    if (source[offset] === "\r" && source[offset + 1] === "\n") offset++;
-    normalized++;
+function splitSourceLines(source) {
+  const lines = [];
+  const re = /\r\n|\r|\n/g;
+  let start = 0, match;
+  while ((match = re.exec(source)) !== null) {
+    lines.push({ text: source.slice(start, match.index), ending: match[0] });
+    start = match.index + match[0].length;
   }
-  if (normalized === normalizedIndex) return source.length;
-  throw new Error("invalid normalized source offset");
-}
-
-function lineEndingNear(source, start, end) {
-  const replaced = source.slice(start, end).match(/\r\n|\r|\n/);
-  if (replaced) return replaced[0];
-  const previous = source.slice(0, start).match(/\r\n|\r|\n/g);
-  if (previous?.length) return previous[previous.length - 1];
-  return source.slice(end).match(/\r\n|\r|\n/)?.[0] ?? "\n";
+  lines.push({ text: source.slice(start), ending: "" });
+  return lines;
 }
 
 /**
- * Change only a bounded span relative to the normalized textarea value.
- * No typing => exact original bytes. Outside the changed span, preserve every
- * original line ending, including mixed CRLF/LF documents.
+ * Align surviving lines to their original endings. Insertion/deletion shifts
+ * lines; simple index-based EOL replacement would otherwise corrupt the EOLs
+ * of untouched lines in mixed-ending documents.
  */
+function alignLines(before, after) {
+  const n = before.length, m = after.length;
+  const positions = Array(m).fill(-1);
+  // Prefer safe failure over a memory-intensive O(n*m) edit on very large files.
+  if (n * m > 1_000_000) {
+    if (n !== m) throw new Error("Too many lines to safely remap inserted/deleted lines; edit a smaller region.");
+    for (let i = 0; i < m; i++) positions[i] = i;
+    return positions;
+  }
+  const rows = Array.from({ length: n + 1 }, () => new Uint32Array(m + 1));
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      rows[i][j] = before[i] === after[j] ? rows[i + 1][j + 1] + 1 :
+        Math.max(rows[i + 1][j], rows[i][j + 1]);
+    }
+  }
+  const anchors = [];
+  let i = 0, j = 0;
+  while (i < n && j < m) {
+    if (before[i] === after[j]) {
+      anchors.push([i, j]);
+      i++; j++;
+    } else if (rows[i + 1][j] >= rows[i][j + 1]) i++;
+    else j++;
+  }
+  anchors.push([n, m]);
+  let previousOld = -1, previousNew = -1;
+  for (const [oldIndex, newIndex] of anchors) {
+    // Modified lines between LCS anchors inherit the EOL of the corresponding
+    // original line; truly inserted lines use their nearest surviving neighbor.
+    for (let k = previousNew + 1; k < newIndex; k++) {
+      const paired = previousOld + 1 + k - (previousNew + 1);
+      if (paired < oldIndex) positions[k] = paired;
+    }
+    if (newIndex < m) positions[newIndex] = oldIndex;
+    previousOld = oldIndex;
+    previousNew = newIndex;
+  }
+  return positions;
+}
+
 export function sourceFromTextarea(original, textareaValue) {
-  const before = displaySource(original);
-  const after = displaySource(textareaValue);
-  if (before === after) return original;
-  let prefix = 0;
-  while (prefix < before.length && prefix < after.length && before[prefix] === after[prefix]) prefix++;
-  let suffix = 0;
-  while (suffix < before.length - prefix && suffix < after.length - prefix &&
-         before[before.length - 1 - suffix] === after[after.length - 1 - suffix]) suffix++;
-  const start = sourceOffset(original, prefix);
-  const end = sourceOffset(original, before.length - suffix);
-  const replacement = after.slice(prefix, after.length - suffix)
-    .replace(/\n/g, lineEndingNear(original, start, end));
-  return original.slice(0, start) + replacement + original.slice(end);
+  const edited = displaySource(textareaValue);
+  if (displaySource(original) === edited) return original;
+
+  const old = splitSourceLines(original);
+  const next = edited.split("\n");
+  const mapped = alignLines(old.map(line => line.text), next);
+  const nearestEnding = (index) => {
+    for (let i = index - 1; i >= 0; i--) {
+      if (mapped[i] >= 0 && old[mapped[i]].ending) return old[mapped[i]].ending;
+    }
+    for (let i = index + 1; i < mapped.length; i++) {
+      if (mapped[i] >= 0 && old[mapped[i]].ending) return old[mapped[i]].ending;
+    }
+    return old.find(line => line.ending)?.ending ?? "\n";
+  };
+  return next.map((line, index) => {
+    if (index === next.length - 1) return line;
+    const previous = mapped[index] >= 0 ? old[mapped[index]].ending : "";
+    return line + (previous || nearestEnding(index));
+  }).join("");
 }
