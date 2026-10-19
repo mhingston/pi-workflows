@@ -72,10 +72,15 @@ async function body(request: IncomingMessage): Promise<Record<string, unknown>> 
       request.headers["x-workflow-editor"] !== "1") {
     throw new Error("expected application/json and X-Workflow-Editor: 1");
   }
+  // setEncoding maintains an incomplete UTF-8 sequence across stream chunks.
+  request.setEncoding("utf8");
   let value = "";
+  let bytes = 0;
   for await (const part of request) {
-    value += part.toString("utf8");
-    if (value.length > 2_000_000) throw new Error("request too large (limit 2MB)");
+    const chunk = part as string;
+    bytes += Buffer.byteLength(chunk, "utf8");
+    if (bytes > 2_000_000) throw new Error("request too large (limit 2MB)");
+    value += chunk;
   }
   const parsed: unknown = JSON.parse(value);
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("invalid action object");
@@ -88,6 +93,14 @@ export async function startEditor(folder: string, port = 4175) {
   let workflow: LoadedWorkflow = await loadWorkflow(initial);
   let saved: WorkflowFiles = initial;
   let revision = 0;
+  // All state transitions, including revision checks and disk saves, are serialized.
+  // A rejected action does not poison the queue for subsequent requests.
+  let actionTail: Promise<void> = Promise.resolve();
+  function enqueue<T>(action: () => Promise<T>): Promise<T> {
+    const running = actionTail.then(action);
+    actionTail = running.then(() => undefined, () => undefined);
+    return running;
+  }
   const publicFiles: Record<string, [string, string]> = {
     "/": ["../ui/index.html", "text/html; charset=utf-8"],
     "/app.js": ["../ui/app.js", "text/javascript; charset=utf-8"],
@@ -106,9 +119,14 @@ export async function startEditor(folder: string, port = 4175) {
       }
       const url = new URL(request.url ?? "/", "http://localhost:" + activePort);
       if (request.method === "GET" && url.pathname === "/api/state") {
-        json(response, 200, {
-          revision, dirty: JSON.stringify(exportWorkflow(workflow)) !== JSON.stringify(saved),
-          files: exportWorkflow(workflow), graph: await projectWorkflow(workflow),
+        await enqueue(async () => {
+          const snapshot = workflow;
+          const files = exportWorkflow(snapshot);
+          const graph = await projectWorkflow(snapshot);
+          json(response, 200, {
+            revision, dirty: JSON.stringify(files) !== JSON.stringify(saved),
+            files, graph,
+          });
         });
         return;
       }
@@ -118,37 +136,45 @@ export async function startEditor(folder: string, port = 4175) {
           json(response, 403, { error: "cross-origin changes are forbidden" }); return;
         }
         const action = await body(request);
-        if (action.revision !== revision) { json(response, 409, { error: "stale editor revision; reload" }); return; }
-        let pending = workflow;
-        switch (action.type) {
-          case "move":
-            if (typeof action.id !== "string") throw new Error("missing node id");
-            pending = await moveProjectedNode(workflow, action.id, action.x as number, action.y as number);
-            break;
-          case "property":
-            if (typeof action.id !== "string") throw new Error("missing node id");
-            pending = await editKnownName(workflow, action.id, action.value as string);
-            break;
-          case "code":
-            pending = await editCode(workflow, action.source as string);
-            break;
-          case "save":
-            await persist(directory, saved, exportWorkflow(workflow));
-            saved = exportWorkflow(workflow);
-            break;
-          case "reload":
-            pending = await loadWorkflow(await readPackage(directory));
-            break;
-          default: throw new Error("unknown editor action");
-        }
-        // Reject stale AST identities before changing in-memory state.
-        await projectWorkflow(pending);
-        workflow = pending;
-        if (action.type === "reload") saved = exportWorkflow(workflow);
-        revision++;
-        json(response, 200, {
-          revision, dirty: JSON.stringify(exportWorkflow(workflow)) !== JSON.stringify(saved),
-          files: exportWorkflow(workflow), graph: await projectWorkflow(workflow),
+        await enqueue(async () => {
+          // Verify *inside* the serialized section, after earlier edits/saves.
+          if (action.revision !== revision) {
+            json(response, 409, { error: "stale editor revision; reload" });
+            return;
+          }
+          let pending = workflow;
+          let nextSaved = saved;
+          switch (action.type) {
+            case "move":
+              if (typeof action.id !== "string") throw new Error("missing node id");
+              pending = await moveProjectedNode(workflow, action.id, action.x as number, action.y as number);
+              break;
+            case "property":
+              if (typeof action.id !== "string") throw new Error("missing node id");
+              pending = await editKnownName(workflow, action.id, action.value as string);
+              break;
+            case "code":
+              pending = await editCode(workflow, action.source as string);
+              break;
+            case "save":
+              await persist(directory, saved, exportWorkflow(workflow));
+              nextSaved = exportWorkflow(workflow);
+              break;
+            case "reload":
+              pending = await loadWorkflow(await readPackage(directory));
+              nextSaved = exportWorkflow(pending);
+              break;
+            default: throw new Error("unknown editor action");
+          }
+          const graph = await projectWorkflow(pending);
+          const files = exportWorkflow(pending);
+          workflow = pending;
+          saved = nextSaved;
+          revision++;
+          json(response, 200, {
+            revision, dirty: JSON.stringify(files) !== JSON.stringify(saved),
+            files, graph,
+          });
         });
         return;
       }
