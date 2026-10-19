@@ -35,8 +35,11 @@ through recovery. On a replay with intent but no local receipt, *only this
 opted-in provider* may receive the same request again. The adapter validates
 `idempotencyKey`, entire `request`, and the boolean approval in the returned
 `applied` or `already_applied` receipt before storing the native approval
-memo. A matching repeat is reported as `approvalDisposition: "already_applied"`
-in the completed workflow outcome. `unknown`, `conflict`, malformed/mismatched
+memo **together with the verified provider disposition**. A matching repeat
+is reported as `approvalDisposition: "already_applied"` in the completed
+workflow outcome. Replaying a saved provider receipt restores its original
+disposition without calling the provider again; legacy boolean-only memos
+remain supported. `unknown`, `conflict`, malformed/mismatched
 receipts, and thrown provider errors **never imply success** and finish with
 `needs_reconciliation`; none falls back to a legacy unsafe retry.
 
@@ -49,8 +52,13 @@ provider-side deduplication, so two application attempts produce one stored
 provider application; an incomplete or unreadable file is `unknown`. Test
 probes also count native child executions and reject repeated child work.
 Negative recovery tests exercise a conflicting same-key/different-payload
-receipt and unreadable provider status. Ordinary completion and the old
-manual-reconciliation crash test continue to run in CI.
+receipt and unreadable provider status. Additional native-runtime tests reject
+positive-status receipts with incorrect keys, approval reasons, input hashes,
+or non-boolean decisions, and reject providers that mutate the request object.
+A second SIGKILL boundary, after the native approval memo but before the
+terminal commit, proves that replay restores the verified provider disposition
+without reinvoking the provider or completed children. Ordinary completion
+and the old manual-reconciliation crash test continue to run in CI.
 
 **Limits:** The file provider is a sequential, test-only model, **not** a
 production transactional provider, distributed lock or reliable idempotency
