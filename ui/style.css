@@ -51,3 +51,11 @@ h3 { color: #d7e5f1; }
   aside { min-height: 670px; border-left: none; }
   #code { min-height: 300px; }
 }
+.runtime { max-height: 33vh; overflow-y: auto; border-top: 1px solid #354555; }
+.runtime .panel-title { flex-wrap: wrap; }
+.run-controls { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.run-controls input { max-width: 150px; padding: 7px; background: #1d2938; color: #fff; border: 1px solid #6c8598; border-radius: 5px; }
+#run-message { margin: 8px 14px; font-size: 12px; color: #adbcc9; }
+.runtime-tree, .runtime-tree ul { list-style: none; padding-left: 20px; border-left: 1px solid #63849c; margin: 8px 14px; }
+.runtime-tree li { margin: 8px 0; font-size: 12px; }
+.runtime-state { display: block; margin: 3px 0; color: #bdcedb; }

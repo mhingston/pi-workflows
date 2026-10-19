@@ -213,7 +213,10 @@ export function createWorkflowInvocationService(config: InvocationConfig): Workf
             if (outcome.result.status === "needs_reconciliation") {
               return { status: "needs_reconciliation", runId: Number(id), effectKey: outcome.result.effectKey };
             }
-            return { status: "completed", runId: Number(id), output: outcome.result.output };
+            if (outcome.result.status === "completed") {
+              return { status: "completed", runId: Number(id), output: outcome.result.output };
+            }
+            return { status: "failed", runId: Number(id), error: "Native workflow outcome is inconsistent." };
           }
           return { status: "failed", runId: Number(id),
             error: "Native workflow task did not complete successfully." };

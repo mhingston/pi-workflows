@@ -1,6 +1,7 @@
 import { displaySource, sourceFromTextarea } from "./source-text.js";
 const $ = (id) => document.getElementById(id);
 let state = null;
+let runtimeGraph = null;
 let selected = null;
 let positions = new Map();
 let dragging = null;
@@ -89,6 +90,61 @@ function render() {
   positions = new Map(state.graph.nodes.map(n => [n.id, { x: n.x, y: n.y }]));
   renderNodes();
   inspect();
+}
+function renderRuntimeGraph() {
+  const container = $("run-nodes");
+  container.replaceChildren();
+  if (!runtimeGraph) return;
+  const byParent = new Map();
+  for (const node of runtimeGraph.nodes) {
+    const key = node.parentTaskId ?? null;
+    byParent.set(key, [...(byParent.get(key) ?? []), node]);
+  }
+  const used = new Set();
+  function append(parent, list) {
+    for (const node of byParent.get(parent) ?? []) {
+      if (used.has(node.taskId)) continue;
+      used.add(node.taskId);
+      const item = document.createElement("li");
+      item.append(text("strong", "#" + node.taskId + " " + node.kind));
+      item.append(text("span", node.status + (node.phase ? " · " + node.phase : "") +
+        (node.outcome ? " · " + node.outcome : ""), "runtime-state"));
+      list.append(item);
+      const children = document.createElement("ul");
+      append(node.taskId, children);
+      if (children.childElementCount) item.append(children);
+    }
+  }
+  append(null, container);
+  // The parent run may itself have another owner; its view is rooted here.
+  if (!container.childElementCount) append(runtimeGraph.nodes[0]?.parentTaskId ?? null, container);
+}
+async function inspectRun() {
+  const input = $("run-id");
+  const runId = input.value.trim();
+  if (!/^[1-9][0-9]*$/.test(runId) || !Number.isSafeInteger(Number(runId))) {
+    $("run-message").textContent = "Enter a valid native task ID.";
+    return;
+  }
+  try {
+    const response = await fetch("/api/run-graph?runId=" + encodeURIComponent(runId));
+    const graph = await response.json();
+    if (!response.ok) throw new Error(graph.error || "Run inspection failed");
+    runtimeGraph = graph;
+    renderRuntimeGraph();
+    const manifest = JSON.parse(state.files.manifestJson);
+    const different = manifest.version !== graph.workflowVersion ||
+      manifest.sourceSha256 !== graph.sourceSha256;
+    $("run-message").textContent = "Run #" + graph.runId + " · " + graph.workflowId +
+      "@" + graph.workflowVersion + " · " + graph.nodes.length + " native tasks" +
+      (different ? " · Different published revision from current editor source." : "") +
+      (graph.hierarchyComplete ? "" : " · Child hierarchy incomplete (missing native receipts).") +
+      " · Snapshot only; refresh to update. No model/hook telemetry.";
+  } catch (error) {
+    runtimeGraph = null;
+    renderRuntimeGraph();
+    $("run-message").textContent = error.message;
+  }
 }
 function stageSize() {
   const list = [...positions.values()];
@@ -243,4 +299,5 @@ $("save").addEventListener("click", () => {
   api("save");
 });
 $("download").addEventListener("click", downloads);
+$("inspect-run").addEventListener("click", inspectRun);
 load();

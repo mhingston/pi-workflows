@@ -81,7 +81,7 @@ Prove source/no-op-save invariants independently of whether the graph can static
              +------------------+---------------------+
              |                  |                     |
       Workflow library     Web graph editor       Run inspector
-      + version store      + code editor          + trace/timeline
+      + version store      + code editor          + native task state
              |                  |                     |
              +------ canonical workflow package ------+
                                 |
@@ -104,7 +104,7 @@ Proposed ports (not claims about upstream types):
 - `WorkflowRepository`: discover/load/save/publish immutable definitions
 - `WorkflowRuntime`: validate/start/status/signal/cancel; explicitly list capabilities
 - `CodeExecutor`: run approved, content-addressed code units under a permission/sandbox policy
-- `TraceSink`: record correlated run, task, agent, turn, hook and tool events (best effort)
+- Native task correlation: use Pi Durable's taskGraph/watchTaskGraph and getTask; external telemetry sinks live in a separate extension
 - `WorkflowProjector`: parse/visualize and **safely** apply only supported edits to source
 
 The regular Pi extension owns `registerCommand` and model tool invocation. The Pi Durable adapter owns its named tasks/conversation invocation and durable state. Don't assume those extension APIs have identical registration or lifecycle contracts.
@@ -129,11 +129,11 @@ The invoker checks: existence, permissions, schema, provider capabilities, effec
 - Keep retries/timeouts/approvals driven by the owning runtime and explicit adapters, not parallel ad hoc process state.
 - Validate the limits of conversation-scoped vs globally discoverable storage in #1.
 
-## 7. Editor, trace and security requirements
+## 7. Editor, native run inspection and security requirements
 
 **Editor (first cut):** load/display arbitrary source package; layout persistence; code pane; supported property edit; refuse edits with ambiguous AST/source mapping. Prefer a small working subset over a wide catalog that discards semantics.
 
-**Tracing:** separate static authoring graph from runtime timeline. Correlate workflow run -> task -> agent turn -> model call -> hook/tool -> child tasks, retaining failures, durations and causal links. Pi events may not expose every hook callback; instrument registered dispatch boundaries where possible. Missing data must appear as missing, not invented.
+**Native run inspection:** keep the static authoring graph separate from the live Pi Durable task graph. The workflow builder projects native run ID, revision pins, task ownership and committed status through the read-only contract in [run correlation](run-correlation.md). Full agent/model/tool/hook traces, spans, retention/export and historical timelines belong to a separate telemetry extension. Missing visibility must stay explicitly missing, never guessed.
 
 **Safety/trust:** installing a Pi extension gives it the host process's privileges. Never execute arbitrary imported workflow TypeScript from the browser in the host by default. Require trust approval and scoped permissions; isolate untrusted code (potentially Dynamic Workers), constrain secrets/network/filesystem access, and redact logs/traces. Human approval gates protect side effects, not merely a visible UI prompt.
 

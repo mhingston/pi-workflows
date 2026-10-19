@@ -14,6 +14,7 @@
     "editor": "node --experimental-strip-types src/editor-server.ts",
     "test:editor": "node --experimental-strip-types --test tests/editor.test.ts tests/source-text.test.mjs",
     "test:gate": "node --experimental-strip-types --test tests/gate.test.ts",
+    "test:correlation": "node --experimental-strip-types --test tests/run-graph.test.ts",
     "test:providers": "node --experimental-strip-types --test tests/providers.test.ts"
   },
   "dependencies": {
